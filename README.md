@@ -62,6 +62,116 @@ GET  /api/scheduler/orders/schedule?strategy=MOST_ROBUST
 GET  /api/scheduler/strategies/compare  
 POST /api/scheduler/replan
 
+
+## 📦 Installation & Setup
+
+### Prerequisites
+
+Make sure the following are installed:
+
+- Java 17+
+- MySQL 8+
+- Node.js 18+
+- npm
+- Git
+
+### 1. Clone the Repository
+
+    git clone https://github.com/pranavk08/machine-shop-scheduler.git
+    cd machine-shop-scheduler
+
+### 2. Configure MySQL
+
+Create the database:
+
+    CREATE DATABASE machine_shop_scheduler;
+
+Update the database credentials in:
+
+    src/main/resources/application.properties
+
+Configure your MySQL username and password before starting the backend.
+
+### 3. Start the Backend
+
+From the project root:
+
+    .\mvnw.cmd spring-boot:run
+
+The backend will run at:
+
+    http://localhost:8080
+
+### 4. Start the Frontend
+
+Open a new terminal:
+
+    cd frontend
+    npm install
+    npm run dev
+
+The frontend will run at:
+
+    http://localhost:5173
+
+### 5. Login
+
+Open the frontend in your browser and use the demo credentials:
+
+    Username: admin
+    Password: admin123
+
+
+## 📁 Project Structure
+
+    machine-shop-scheduler/
+    │
+    ├── frontend/
+    │   ├── src/
+    │   │   ├── components/
+    │   │   │   ├── ProtectedRoute.jsx
+    │   │   │   └── Sidebar.jsx
+    │   │   │
+    │   │   ├── page/
+    │   │   │   ├── Login.jsx
+    │   │   │   ├── Dashboard.jsx
+    │   │   │   ├── Orders.jsx
+    │   │   │   ├── Schedule.jsx
+    │   │   │   ├── Machines.jsx
+    │   │   │   ├── Operators.jsx
+    │   │   │   └── Disruptions.jsx
+    │   │   │
+    │   │   ├── App.jsx
+    │   │   └── index.css
+    │   │
+    │   ├── package.json
+    │   └── vite.config.js
+    │
+    ├── src/
+    │   ├── main/
+    │   │   ├── java/com/mirai/machineshop/
+    │   │   │   ├── config/
+    │   │   │   ├── controller/
+    │   │   │   ├── dto/
+    │   │   │   ├── entity/
+    │   │   │   ├── exception/
+    │   │   │   ├── repository/
+    │   │   │   ├── scheduler/
+    │   │   │   └── service/
+    │   │   │
+    │   │   └── resources/
+    │   │       ├── application.properties
+    │   │       └── application-example.properties
+    │   │
+    │   └── test/
+    │       └── java/com/mirai/machineshop/
+    │
+    ├── pom.xml
+    ├── mvnw
+    ├── mvnw.cmd
+    ├── .gitignore
+    └── README.md
+
 ## 🧪 Verification
 
 Backend Tests: 41  
