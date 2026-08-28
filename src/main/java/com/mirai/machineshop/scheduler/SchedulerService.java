@@ -719,6 +719,34 @@ public class SchedulerService {
                 null);
     }
 
+    private String getOperationKey(Operation operation) {
+        if (operation == null) {
+            return "";
+        }
+        if (operation.getId() != null) {
+            return "ID:" + operation.getId();
+        }
+        String orderNum = (operation.getOrder() != null && operation.getOrder().getOrderNumber() != null)
+                ? operation.getOrder().getOrderNumber()
+                : (operation.getOrder() != null && operation.getOrder().getId() != null
+                        ? String.valueOf(operation.getOrder().getId())
+                        : "UNKNOWN");
+        return "ORDER:" + orderNum + "#SEQ:" + operation.getSequenceNumber();
+    }
+
+    private boolean isSameOrder(Order o1, Order o2) {
+        if (o1 == null || o2 == null) {
+            return false;
+        }
+        if (o1.getId() != null && o2.getId() != null) {
+            return o1.getId().equals(o2.getId());
+        }
+        if (o1.getOrderNumber() != null && o2.getOrderNumber() != null) {
+            return o1.getOrderNumber().equalsIgnoreCase(o2.getOrderNumber());
+        }
+        return false;
+    }
+
     private List<ScheduleResult> generateFullSchedule(
             List<Order> openOrders,
             LocalDateTime schedulingStartTime,
@@ -729,10 +757,10 @@ public class SchedulerService {
         SchedulingState schedulingState = new SchedulingState();
         List<ScheduleResult> completeSchedule = new ArrayList<>();
 
-        Map<Long, ScheduleResult> baselineMap = new HashMap<>();
+        Map<String, ScheduleResult> baselineMap = new HashMap<>();
         if (baselineSchedule != null) {
             for (ScheduleResult res : baselineSchedule) {
-                baselineMap.put(res.getOperation().getId(), res);
+                baselineMap.put(getOperationKey(res.getOperation()), res);
             }
         }
 
@@ -742,7 +770,7 @@ public class SchedulerService {
                     .findAll()
                     .stream()
                     .filter(operation ->
-                            operation.getOrder().getId().equals(order.getId()))
+                            isSameOrder(operation.getOrder(), order))
                     .sorted((a, b) ->
                             Integer.compare(
                                     a.getSequenceNumber(),
@@ -753,7 +781,7 @@ public class SchedulerService {
 
             for (Operation operation : operations) {
 
-                ScheduleResult baselineOp = baselineMap.get(operation.getId());
+                ScheduleResult baselineOp = baselineMap.get(getOperationKey(operation));
 
                 if (lockBeforeTime != null && baselineOp != null
                         && !baselineOp.getEndTime().isAfter(lockBeforeTime)) {
@@ -883,14 +911,14 @@ public class SchedulerService {
         int operatorsReassignedCount = 0;
         int ordersDelayedCount = 0;
 
-        Map<Long, ScheduleResult> beforeOpMap = new HashMap<>();
+        Map<String, ScheduleResult> beforeOpMap = new HashMap<>();
         for (ScheduleResult res : beforeSchedule) {
-            beforeOpMap.put(res.getOperation().getId(), res);
+            beforeOpMap.put(getOperationKey(res.getOperation()), res);
         }
 
         for (ScheduleResult afterRes : afterSchedule) {
-            Long opId = afterRes.getOperation().getId();
-            ScheduleResult beforeRes = beforeOpMap.get(opId);
+            String opKey = getOperationKey(afterRes.getOperation());
+            ScheduleResult beforeRes = beforeOpMap.get(opKey);
 
             if (beforeRes == null) {
                 continue;
@@ -940,12 +968,12 @@ public class SchedulerService {
         // Check delayed orders based on final operation completion
         for (Order order : openOrders) {
             ScheduleResult latestBefore = beforeSchedule.stream()
-                    .filter(res -> res.getOperation().getOrder().getId().equals(order.getId()))
+                    .filter(res -> isSameOrder(res.getOperation().getOrder(), order))
                     .max((a, b) -> a.getEndTime().compareTo(b.getEndTime()))
                     .orElse(null);
 
             ScheduleResult latestAfter = afterSchedule.stream()
-                    .filter(res -> res.getOperation().getOrder().getId().equals(order.getId()))
+                    .filter(res -> isSameOrder(res.getOperation().getOrder(), order))
                     .max((a, b) -> a.getEndTime().compareTo(b.getEndTime()))
                     .orElse(null);
 

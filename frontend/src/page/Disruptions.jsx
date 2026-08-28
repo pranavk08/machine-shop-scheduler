@@ -45,7 +45,6 @@ function Disruptions() {
   }, []);
 
   const handleOpenModal = () => {
-    // Default start to current ISO datetime, end to 4 hours later
     const now = new Date();
     const future = new Date(now.getTime() + 4 * 60 * 60 * 1000);
     const formatLocal = (d) => d.toISOString().slice(0, 16);
@@ -127,6 +126,23 @@ function Disruptions() {
       });
   };
 
+  const formatTimeSlot = (startStr, endStr) => {
+    if (!startStr || !endStr) return "-";
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+
+    const isSameDate = start.toDateString() === end.toDateString();
+    const startTimeFormatted = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const endTimeFormatted = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = start.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+    if (isSameDate) {
+      return `${dateStr}, ${startTimeFormatted} - ${endTimeFormatted}`;
+    }
+    const endDateStr = end.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateStr} ${startTimeFormatted} - ${endDateStr} ${endTimeFormatted}`;
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -162,39 +178,47 @@ function Disruptions() {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-          <p className="text-sm font-medium text-slate-500">Total Breakdowns</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Breakdowns</p>
           <h2 className="text-3xl font-bold text-slate-900 mt-2">{breakdowns.length}</h2>
-          <p className="text-xs text-slate-400 mt-1">Logged machine downtime events</p>
+          <p className="text-xs text-slate-400 mt-1">Logged downtime events</p>
         </div>
 
         {replanResult && (
           <>
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-              <p className="text-sm font-medium text-slate-500">Operations Shifted</p>
+            <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Operations Shifted</p>
               <h2 className="text-3xl font-bold text-amber-600 mt-2">
                 {replanResult.operationsMovedCount}
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Out of {replanResult.totalOperations} total operations
+                Out of {replanResult.totalOperations} operations
               </p>
             </div>
 
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-              <p className="text-sm font-medium text-slate-500">Machines Reassigned</p>
+            <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Machines Reassigned</p>
               <h2 className="text-3xl font-bold text-blue-600 mt-2">
                 {replanResult.machinesReassignedCount}
               </h2>
-              <p className="text-xs text-slate-400 mt-1">Rerouted to alternative machines</p>
+              <p className="text-xs text-slate-400 mt-1">Rerouted machines</p>
             </div>
 
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-              <p className="text-sm font-medium text-slate-500">Orders Delayed</p>
+            <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Operators Reassigned</p>
+              <h2 className="text-3xl font-bold text-indigo-600 mt-2">
+                {replanResult.operatorsReassignedCount}
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">Reassigned staff</p>
+            </div>
+
+            <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Orders Delayed</p>
               <h2 className="text-3xl font-bold text-red-600 mt-2">
                 {replanResult.ordersDelayedCount}
               </h2>
-              <p className="text-xs text-slate-400 mt-1">Delayed due to bottleneck downtime</p>
+              <p className="text-xs text-slate-400 mt-1">Delayed completions</p>
             </div>
           </>
         )}
@@ -268,15 +292,15 @@ function Disruptions() {
                       {delta.timeChanged ? (
                         <div className="space-y-0.5">
                           <p className="text-slate-400 line-through">
-                            {new Date(delta.beforeStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(delta.beforeEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatTimeSlot(delta.beforeStartTime, delta.beforeEndTime)}
                           </p>
                           <p className="text-slate-900 font-medium">
-                            {new Date(delta.afterStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(delta.afterEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatTimeSlot(delta.afterStartTime, delta.afterEndTime)}
                           </p>
                         </div>
                       ) : (
                         <span>
-                          {new Date(delta.afterStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(delta.afterEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {formatTimeSlot(delta.afterStartTime, delta.afterEndTime)}
                         </span>
                       )}
                     </td>

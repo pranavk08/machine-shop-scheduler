@@ -57,6 +57,7 @@ class DisruptionReplanningTests {
     private Machine lathe1;
     private Machine lathe2;
     private Machine grinder1;
+    private Machine mill1;
     private Operator operatorRavi;
     private Operator operatorKumar;
     private Shift fullDayShift;
@@ -89,6 +90,9 @@ class DisruptionReplanningTests {
         grinder1 = new Machine("GRIND-01", "Cylindrical Grinder", "GRINDING");
         ReflectionTestUtils.setField(grinder1, "id", 3L);
 
+        mill1 = new Machine("MILL-01", "Milling Center", "MILLING");
+        ReflectionTestUtils.setField(mill1, "id", 4L);
+
         operatorRavi = new Operator("OP-001", "Ravi");
         ReflectionTestUtils.setField(operatorRavi, "id", 1L);
 
@@ -117,13 +121,11 @@ class DisruptionReplanningTests {
         when(orderRepository.existsById(100L)).thenReturn(true);
         when(operationRepository.findAll()).thenReturn(List.of(turningOp));
 
-        // Capabilities: both lathe1 and lathe2 can turn
         when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
                 .thenReturn(List.of(
                         new MachineCapability(lathe1, "TURNING"),
                         new MachineCapability(lathe2, "TURNING")));
 
-        // Operators: Ravi has turning skill
         when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
                 .thenReturn(List.of(new OperatorSkill(operatorRavi, "TURNING")));
 
@@ -131,7 +133,6 @@ class DisruptionReplanningTests {
         when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
                 .thenReturn(List.of(shift));
 
-        // Active breakdown on lathe1 from 10:00 to 14:00
         Breakdown lathe1Breakdown = new Breakdown(lathe1, replanStart, replanStart.plusHours(4), "Spindle failure");
         when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(lathe1Breakdown));
         when(breakdownRepository.findByMachineId(2L)).thenReturn(List.of());
@@ -144,12 +145,10 @@ class DisruptionReplanningTests {
         assertEquals(1, response.machinesReassignedCount());
         assertEquals(0, response.ordersDelayedCount());
 
-        // Operation in afterSchedule should be rerouted to CNC-02
         ScheduleResult afterRes = response.afterSchedule().get(0);
         assertEquals("CNC-02", afterRes.getMachine().getMachineCode());
         assertEquals(replanStart, afterRes.getStartTime());
 
-        // Delta check
         OperationScheduleDelta delta = response.impactDeltas().get(0);
         assertEquals("CNC-01", delta.beforeMachineCode());
         assertEquals("CNC-02", delta.afterMachineCode());
@@ -172,7 +171,6 @@ class DisruptionReplanningTests {
         when(orderRepository.existsById(200L)).thenReturn(true);
         when(operationRepository.findAll()).thenReturn(List.of(grindOp));
 
-        // Only grinder1 is capable
         when(machineCapabilityRepository.findByCapabilityIgnoreCase("GRINDING"))
                 .thenReturn(List.of(new MachineCapability(grinder1, "GRINDING")));
 
@@ -183,7 +181,6 @@ class DisruptionReplanningTests {
         when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
                 .thenReturn(List.of(shift));
 
-        // Breakdown on grinder1 from 10:00 to 14:00 (4 hours)
         LocalDateTime breakdownEnd = replanStart.plusHours(4);
         Breakdown grindBreakdown = new Breakdown(grinder1, replanStart, breakdownEnd, "Wheel alignment");
         when(breakdownRepository.findByMachineId(3L)).thenReturn(List.of(grindBreakdown));
@@ -193,19 +190,18 @@ class DisruptionReplanningTests {
         assertNotNull(response);
         assertEquals(1, response.totalOperations());
         assertEquals(1, response.operationsMovedCount());
-        assertEquals(0, response.machinesReassignedCount()); // Machine is still GRIND-01
-        assertEquals(1, response.ordersDelayedCount()); // Delayed by 4 hours
+        assertEquals(0, response.machinesReassignedCount());
+        assertEquals(1, response.ordersDelayedCount());
 
         ScheduleResult afterRes = response.afterSchedule().get(0);
         assertEquals("GRIND-01", afterRes.getMachine().getMachineCode());
-        // Should start immediately at breakdown end (14:00)
         assertEquals(breakdownEnd, afterRes.getStartTime());
         assertEquals(breakdownEnd.plusMinutes(60), afterRes.getEndTime());
 
         OperationScheduleDelta delta = response.impactDeltas().get(0);
         assertFalse(delta.machineChanged());
         assertTrue(delta.timeChanged());
-        assertEquals(240, delta.delayMinutes()); // 4 hours delay
+        assertEquals(240, delta.delayMinutes());
     }
 
     @Test
@@ -217,11 +213,9 @@ class DisruptionReplanningTests {
         Order order = new Order("ORD-MULTI", null, 10, "SHAFT", baseTime.plusDays(2), "OPEN");
         ReflectionTestUtils.setField(order, "id", 300L);
 
-        // Op 1 runs 08:00 to 09:30 (finishes before replanStart 12:00)
         Operation op1 = new Operation(order, 1, "TURNING", 90, "TURNING");
         ReflectionTestUtils.setField(op1, "id", 3001L);
 
-        // Op 2 runs 09:30 to 13:30 (overlaps or occurs past replanStart 12:00)
         Operation op2 = new Operation(order, 2, "TURNING", 240, "TURNING");
         ReflectionTestUtils.setField(op2, "id", 3002L);
 
@@ -241,7 +235,6 @@ class DisruptionReplanningTests {
         when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
                 .thenReturn(List.of(shift));
 
-        // Breakdown on lathe1 starts at 12:00
         Breakdown breakdown = new Breakdown(lathe1, replanStart, replanStart.plusHours(4), "Motor failure");
         when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(breakdown));
         when(breakdownRepository.findByMachineId(2L)).thenReturn(List.of());
@@ -251,18 +244,243 @@ class DisruptionReplanningTests {
         assertNotNull(response);
         assertEquals(2, response.totalOperations());
 
-        // Op 1 (completed at 09:30 before 12:00) must remain on CNC-01 at 08:00
         ScheduleResult afterOp1 = response.afterSchedule().stream()
                 .filter(res -> res.getOperation().getId().equals(3001L))
                 .findFirst().orElseThrow();
         assertEquals("CNC-01", afterOp1.getMachine().getMachineCode());
         assertEquals(baseTime, afterOp1.getStartTime());
 
-        // Op 2 (scheduled at 12:00) must be rerouted to CNC-02 because CNC-01 is broken
         ScheduleResult afterOp2 = response.afterSchedule().stream()
                 .filter(res -> res.getOperation().getId().equals(3002L))
                 .findFirst().orElseThrow();
         assertEquals("CNC-02", afterOp2.getMachine().getMachineCode());
+    }
+
+    @Test
+    void replanSchedule_intermediateOpDelayed_finalOrderDeliveryUnchanged() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime replanStart = LocalDateTime.of(today, LocalTime.of(10, 0));
+
+        // Order 1 has 2 operations: Op 1 (TURNING 60m) and Op 2 (GRINDING 60m)
+        Order order1 = new Order("ORD-001", null, 10, "SHAFT", replanStart.plusDays(2), "OPEN");
+        ReflectionTestUtils.setField(order1, "id", 501L);
+
+        Operation op1 = new Operation(order1, 1, "TURNING", 60, "TURNING");
+        ReflectionTestUtils.setField(op1, "id", 5001L);
+
+        Operation op2 = new Operation(order1, 2, "GRINDING", 60, "GRINDING");
+        ReflectionTestUtils.setField(op2, "id", 5002L);
+
+        // Order 2 reserves grinder1 from 10:00 to 12:00, so Order 1's Op 2 can only start at 12:00 in baseline
+        Order order2 = new Order("ORD-002", null, 10, "SHAFT", replanStart.plusDays(1), "OPEN");
+        ReflectionTestUtils.setField(order2, "id", 502L);
+        Operation opOrder2 = new Operation(order2, 1, "GRINDING", 120, "GRINDING");
+        ReflectionTestUtils.setField(opOrder2, "id", 5003L);
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(order2, order1));
+        when(orderRepository.existsById(501L)).thenReturn(true);
+        when(orderRepository.existsById(502L)).thenReturn(true);
+        when(operationRepository.findAll()).thenReturn(List.of(opOrder2, op1, op2));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
+                .thenReturn(List.of(new MachineCapability(lathe1, "TURNING")));
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("GRINDING"))
+                .thenReturn(List.of(new MachineCapability(grinder1, "GRINDING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
+                .thenReturn(List.of(new OperatorSkill(operatorRavi, "TURNING")));
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("GRINDING"))
+                .thenReturn(List.of(new OperatorSkill(operatorKumar, "GRINDING")));
+
+        OperatorShift shiftRavi = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        OperatorShift shiftKumar = new OperatorShift(operatorKumar, fullDayShift, today, true);
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenAnswer(inv -> {
+                    Long opId = inv.getArgument(0);
+                    return opId.equals(1L) ? List.of(shiftRavi) : List.of(shiftKumar);
+                });
+
+        // 30 minute breakdown on lathe1 (10:00 - 10:30)
+        Breakdown minorBreakdown = new Breakdown(lathe1, replanStart, replanStart.plusMinutes(30), "Tool change delay");
+        when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(minorBreakdown));
+        when(breakdownRepository.findByMachineId(3L)).thenReturn(List.of());
+
+        ReplanResultResponse response = schedulerService.replanSchedule(replanStart);
+
+        assertNotNull(response);
+        // op1 is shifted from 10:00-11:00 to 10:30-11:30 (operationsMovedCount = 1)
+        assertEquals(1, response.operationsMovedCount());
+        // op2 still starts at 12:00 and ends at 13:00 (after order2 finishes on grinder1), so order1 completion is unchanged!
+        assertEquals(0, response.ordersDelayedCount());
+
+        ScheduleResult afterOp1 = response.afterSchedule().stream()
+                .filter(res -> res.getOperation().getId().equals(5001L)).findFirst().orElseThrow();
+        assertEquals(replanStart.plusMinutes(30), afterOp1.getStartTime());
+
+        ScheduleResult afterOp2 = response.afterSchedule().stream()
+                .filter(res -> res.getOperation().getId().equals(5002L)).findFirst().orElseThrow();
+        assertEquals(replanStart.plusHours(2), afterOp2.getStartTime());
+    }
+
+    @Test
+    void replanSchedule_simultaneousMachineAndOperatorChange() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime replanStart = LocalDateTime.of(today, LocalTime.of(10, 0));
+
+        // Machine setup: mill1, lathe1, lathe2
+        // Order 1 (due earlier): needs MILLING (takes Ravi, forcing Order 2 onto Kumar in baseline)
+        Order order1 = new Order("ORD-HIGH", null, 10, "BLOCK", replanStart.plusDays(1), "OPEN");
+        ReflectionTestUtils.setField(order1, "id", 601L);
+        Operation op1 = new Operation(order1, 1, "MILLING", 60, "MILLING");
+        ReflectionTestUtils.setField(op1, "id", 6001L);
+
+        // Order 2 (due later): needs TURNING
+        Order order2 = new Order("ORD-LOW", null, 10, "SHAFT", replanStart.plusDays(2), "OPEN");
+        ReflectionTestUtils.setField(order2, "id", 602L);
+        Operation op2 = new Operation(order2, 1, "TURNING", 60, "TURNING");
+        ReflectionTestUtils.setField(op2, "id", 6002L);
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(order1, order2));
+        when(orderRepository.existsById(601L)).thenReturn(true);
+        when(orderRepository.existsById(602L)).thenReturn(true);
+        when(operationRepository.findAll()).thenReturn(List.of(op1, op2));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("MILLING"))
+                .thenReturn(List.of(new MachineCapability(mill1, "MILLING")));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
+                .thenReturn(List.of(
+                        new MachineCapability(lathe1, "TURNING"),
+                        new MachineCapability(lathe2, "TURNING")));
+
+        // Only Ravi has MILLING skill; both Ravi and Kumar have TURNING skill
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("MILLING"))
+                .thenReturn(List.of(new OperatorSkill(operatorRavi, "MILLING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
+                .thenReturn(List.of(
+                        new OperatorSkill(operatorRavi, "TURNING"),
+                        new OperatorSkill(operatorKumar, "TURNING")));
+
+        OperatorShift shiftRavi = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        OperatorShift shiftKumar = new OperatorShift(operatorKumar, fullDayShift, today, true);
+
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenAnswer(inv -> {
+                    Long opId = inv.getArgument(0);
+                    return opId.equals(1L) ? List.of(shiftRavi) : List.of(shiftKumar);
+                });
+
+        // Breakdowns on mill1 (delays Order 1, freeing Ravi at 10:00) AND lathe1 (forces Order 2 to lathe2)
+        Breakdown millBreakdown = new Breakdown(mill1, replanStart, replanStart.plusHours(4), "Spindle error");
+        Breakdown lathe1Breakdown = new Breakdown(lathe1, replanStart, replanStart.plusHours(4), "Chuck error");
+        when(breakdownRepository.findByMachineId(4L)).thenReturn(List.of(millBreakdown));
+        when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(lathe1Breakdown));
+        when(breakdownRepository.findByMachineId(2L)).thenReturn(List.of());
+
+        ReplanResultResponse response = schedulerService.replanSchedule(replanStart);
+
+        assertNotNull(response);
+        // Both op1 and op2 moved
+        assertEquals(2, response.operationsMovedCount());
+
+        // Find op2 delta: was CNC-01 + Kumar in baseline, becomes CNC-02 + Ravi in replan
+        OperationScheduleDelta op2Delta = response.impactDeltas().stream()
+                .filter(d -> d.orderNumber().equals("ORD-LOW"))
+                .findFirst().orElseThrow();
+
+        assertTrue(op2Delta.machineChanged());
+        assertTrue(op2Delta.operatorChanged());
+        assertEquals("CNC-01", op2Delta.beforeMachineCode());
+        assertEquals("CNC-02", op2Delta.afterMachineCode());
+        assertEquals("Kumar", op2Delta.beforeOperatorName());
+        assertEquals("Ravi", op2Delta.afterOperatorName());
+    }
+
+    @Test
+    void replanSchedule_zeroImpactBreakdown_producesEmptyDeltas() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime replanStart = LocalDateTime.of(today, LocalTime.of(10, 0));
+
+        Order order = new Order("ORD-TURNING-ONLY", null, 10, "SHAFT", replanStart.plusDays(2), "OPEN");
+        ReflectionTestUtils.setField(order, "id", 700L);
+
+        Operation op = new Operation(order, 1, "TURNING", 60, "TURNING");
+        ReflectionTestUtils.setField(op, "id", 7001L);
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(order));
+        when(orderRepository.existsById(700L)).thenReturn(true);
+        when(operationRepository.findAll()).thenReturn(List.of(op));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
+                .thenReturn(List.of(new MachineCapability(lathe1, "TURNING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
+                .thenReturn(List.of(new OperatorSkill(operatorRavi, "TURNING")));
+
+        OperatorShift shift = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenReturn(List.of(shift));
+
+        // Breakdown occurs on MILL-01 (not used by any order)
+        Breakdown millBreakdown = new Breakdown(mill1, replanStart, replanStart.plusHours(4), "Hydraulic leak");
+        when(breakdownRepository.findByMachineId(4L)).thenReturn(List.of(millBreakdown));
+        when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of());
+
+        ReplanResultResponse response = schedulerService.replanSchedule(replanStart);
+
+        assertNotNull(response);
+        assertEquals(1, response.totalOperations());
+        assertEquals(0, response.operationsMovedCount());
+        assertEquals(0, response.machinesReassignedCount());
+        assertEquals(0, response.operatorsReassignedCount());
+        assertEquals(0, response.ordersDelayedCount());
+        assertTrue(response.impactDeltas().isEmpty());
+    }
+
+    @Test
+    void replanSchedule_transientOperationsWithNullDatabaseIds_matchesReliably() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime replanStart = LocalDateTime.of(today, LocalTime.of(10, 0));
+
+        // Create transient Order and Operations with NO database IDs (id == null)
+        Order transientOrder = new Order("ORD-TRANSIENT", null, 10, "SHAFT", replanStart.plusDays(2), "OPEN");
+        Operation transientOp1 = new Operation(transientOrder, 1, "TURNING", 60, "TURNING");
+        Operation transientOp2 = new Operation(transientOrder, 2, "TURNING", 60, "TURNING");
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(transientOrder));
+        when(operationRepository.findAll()).thenReturn(List.of(transientOp1, transientOp2));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
+                .thenReturn(List.of(
+                        new MachineCapability(lathe1, "TURNING"),
+                        new MachineCapability(lathe2, "TURNING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
+                .thenReturn(List.of(new OperatorSkill(operatorRavi, "TURNING")));
+
+        OperatorShift shift = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenReturn(List.of(shift));
+
+        Breakdown breakdown = new Breakdown(lathe1, replanStart, replanStart.plusHours(4), "Belt replacement");
+        when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(breakdown));
+        when(breakdownRepository.findByMachineId(2L)).thenReturn(List.of());
+
+        ReplanResultResponse response = schedulerService.replanSchedule(replanStart);
+
+        assertNotNull(response);
+        assertEquals(2, response.totalOperations());
+        assertEquals(2, response.operationsMovedCount());
+        assertEquals(2, response.machinesReassignedCount());
+        assertEquals(2, response.impactDeltas().size());
+
+        OperationScheduleDelta delta1 = response.impactDeltas().get(0);
+        OperationScheduleDelta delta2 = response.impactDeltas().get(1);
+        assertEquals("ORD-TRANSIENT", delta1.orderNumber());
+        assertEquals(1, delta1.sequenceNumber());
+        assertEquals("ORD-TRANSIENT", delta2.orderNumber());
+        assertEquals(2, delta2.sequenceNumber());
     }
 
     @Test
