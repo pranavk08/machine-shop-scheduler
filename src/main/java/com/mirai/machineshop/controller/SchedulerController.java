@@ -76,9 +76,18 @@ public class SchedulerController {
     }
     
     @GetMapping("/orders/schedule")
-    public List<ScheduleResult> scheduleAllOpenOrders() {
+    public List<ScheduleResult> scheduleAllOpenOrders(
+            @RequestParam(required = false) com.mirai.machineshop.scheduler.SchedulingStrategy strategy) {
 
-        return schedulerService.scheduleAllOpenOrders();
+        if (strategy == null) {
+            return schedulerService.scheduleAllOpenOrders();
+        }
+        return schedulerService.scheduleAllOpenOrders(strategy);
+    }
+
+    @GetMapping("/strategies/compare")
+    public com.mirai.machineshop.dto.StrategyComparisonResponse compareStrategies() {
+        return schedulerService.compareStrategies();
     }
 
     @PostMapping("/replan")

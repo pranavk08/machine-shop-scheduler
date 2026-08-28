@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -718,6 +719,10 @@ public class SchedulerService {
     }
 
     public List<ScheduleResult> scheduleAllOpenOrders() {
+        return scheduleAllOpenOrders(SchedulingStrategy.MOST_ON_TIME);
+    }
+
+    public List<ScheduleResult> scheduleAllOpenOrders(SchedulingStrategy strategy) {
 
         List<Order> openOrders =
                 new ArrayList<>(orderRepository.findByStatusIgnoreCase("OPEN"));
@@ -727,8 +732,9 @@ public class SchedulerService {
                     "No open orders found.");
         }
 
-        openOrders.sort((a, b) ->
-                a.getDueDate().compareTo(b.getDueDate()));
+        List<Operation> allOperations = operationRepository.findAll();
+        SchedulingStrategy effectiveStrategy = (strategy != null) ? strategy : SchedulingStrategy.MOST_ON_TIME;
+        sortOrdersByStrategy(openOrders, effectiveStrategy, allOperations);
 
         return generateFullSchedule(
                 openOrders,
@@ -736,6 +742,152 @@ public class SchedulerService {
                 true,
                 null,
                 null);
+    }
+
+    public com.mirai.machineshop.dto.StrategyComparisonResponse compareStrategies() {
+        LocalDateTime now = LocalDateTime.now();
+        List<Order> openOrders = new ArrayList<>(orderRepository.findByStatusIgnoreCase("OPEN"));
+        if (openOrders.isEmpty()) {
+            throw new SchedulingUnavailableException("No open orders found.");
+        }
+
+        List<com.mirai.machineshop.dto.StrategyEvaluationResult> evaluationResults = new ArrayList<>();
+
+        for (SchedulingStrategy strategy : SchedulingStrategy.values()) {
+            List<ScheduleResult> schedule = scheduleAllOpenOrders(strategy);
+            com.mirai.machineshop.dto.CostImpactSummary costSummary = costCalculationService != null
+                    ? costCalculationService.calculateCostSummary(schedule, openOrders)
+                    : new com.mirai.machineshop.dto.CostImpactSummary(0.0, 0.0, 0, 0.0, 0.0, 0.0, List.of(), List.of());
+
+            double durationHours = 0.0;
+            if (!schedule.isEmpty()) {
+                LocalDateTime firstStart = schedule.stream()
+                        .map(ScheduleResult::getStartTime)
+                        .min(LocalDateTime::compareTo)
+                        .orElse(now);
+                LocalDateTime lastEnd = schedule.stream()
+                        .map(ScheduleResult::getEndTime)
+                        .max(LocalDateTime::compareTo)
+                        .orElse(now);
+                durationHours = Math.round(java.time.Duration.between(firstStart, lastEnd).toMinutes() / 60.0 * 10.0) / 10.0;
+            }
+
+            String displayName;
+            String description;
+            switch (strategy) {
+                case MOST_ON_TIME -> {
+                    displayName = "Most On-Time Schedule";
+                    description = "Prioritizes Tier-1 OEM customer orders and earliest deadlines to minimize penalty exposure.";
+                }
+                case CHEAPEST_PRODUCTION -> {
+                    displayName = "Cheapest Schedule";
+                    description = "Batches compatible part families to eliminate 120-180m changeovers and reduce labor overtime.";
+                }
+                case MOST_ROBUST -> {
+                    displayName = "Most Robust Schedule";
+                    description = "Schedules critical bottleneck operations and tight-slack orders early to buffer against disruptions.";
+                }
+                default -> {
+                    displayName = strategy.name();
+                    description = "";
+                }
+            }
+
+            evaluationResults.add(new com.mirai.machineshop.dto.StrategyEvaluationResult(
+                    strategy.name(),
+                    displayName,
+                    description,
+                    schedule.size(),
+                    durationHours,
+                    costSummary
+            ));
+        }
+
+        // Recommendation rule: Minimum total cost, then minimum late orders, then minimum duration
+        com.mirai.machineshop.dto.StrategyEvaluationResult best = evaluationResults.stream()
+                .min(Comparator.comparingDouble((com.mirai.machineshop.dto.StrategyEvaluationResult s) -> s.costSummary().totalCost())
+                        .thenComparingInt(s -> s.costSummary().lateOrdersCount())
+                        .thenComparingDouble(com.mirai.machineshop.dto.StrategyEvaluationResult::totalScheduleDurationHours))
+                .orElse(evaluationResults.get(0));
+
+        String recommendationReason = String.format(
+                "%s is recommended: Achieves lowest total financial cost of ₹%,.2f with %d late orders and %.1f hrs duration.",
+                best.displayName(),
+                best.costSummary().totalCost(),
+                best.costSummary().lateOrdersCount(),
+                best.totalScheduleDurationHours()
+        );
+
+        return new com.mirai.machineshop.dto.StrategyComparisonResponse(
+                now,
+                evaluationResults,
+                best.strategy(),
+                recommendationReason
+        );
+    }
+
+    private void sortOrdersByStrategy(
+            List<Order> orders,
+            SchedulingStrategy strategy,
+            List<Operation> allOperations) {
+
+        if (orders == null || orders.size() <= 1) {
+            return;
+        }
+
+        switch (strategy) {
+            case MOST_ON_TIME -> {
+                // Tier-1 customer orders first, then earliest due date
+                orders.sort(Comparator
+                        .comparing((Order o) -> (o.getCustomer() != null && o.getCustomer().getTier() != null
+                                && (o.getCustomer().getTier().toUpperCase().contains("1") || o.getCustomer().getTier().equalsIgnoreCase("TIER-1"))) ? 1 : 2)
+                        .thenComparing(Order::getDueDate, Comparator.nullsLast(Comparator.naturalOrder())));
+            }
+            case CHEAPEST_PRODUCTION -> {
+                // Group orders by partFamily where practical, then earliest due date
+                orders.sort(Comparator
+                        .comparing((Order o) -> o.getPartFamily() != null ? o.getPartFamily().toUpperCase() : "")
+                        .thenComparing(Order::getDueDate, Comparator.nullsLast(Comparator.naturalOrder())));
+            }
+            case MOST_ROBUST -> {
+                // Prioritize orders containing bottleneck operations/machines (e.g. GRINDING), then minimum slack
+                Map<String, Integer> processingMap = new HashMap<>();
+                Map<String, Boolean> bottleneckMap = new HashMap<>();
+
+                for (Order order : orders) {
+                    String key = (order.getId() != null) ? "ID:" + order.getId() : "NUM:" + order.getOrderNumber();
+                    List<Operation> orderOps = allOperations.stream()
+                            .filter(op -> isSameOrder(op.getOrder(), order))
+                            .toList();
+
+                    int totalProcessing = orderOps.stream()
+                            .mapToInt(op -> op.getProcessingTimeMinutes() != null ? op.getProcessingTimeMinutes() : 0)
+                            .sum();
+
+                    boolean hasBottleneck = orderOps.stream()
+                            .anyMatch(op -> (op.getRequiredMachineType() != null && op.getRequiredMachineType().equalsIgnoreCase("GRINDING"))
+                                    || (op.getOperationType() != null && op.getOperationType().equalsIgnoreCase("GRINDING")));
+
+                    processingMap.put(key, totalProcessing);
+                    bottleneckMap.put(key, hasBottleneck);
+                }
+
+                LocalDateTime now = LocalDateTime.now();
+
+                orders.sort(Comparator
+                        .comparing((Order o) -> {
+                            String key = (o.getId() != null) ? "ID:" + o.getId() : "NUM:" + o.getOrderNumber();
+                            return Boolean.TRUE.equals(bottleneckMap.get(key)) ? 1 : 2;
+                        })
+                        .thenComparingLong((Order o) -> {
+                            String key = (o.getId() != null) ? "ID:" + o.getId() : "NUM:" + o.getOrderNumber();
+                            long minutesToDue = o.getDueDate() != null ? Duration.between(now, o.getDueDate()).toMinutes() : Long.MAX_VALUE;
+                            int totalProcessing = processingMap.getOrDefault(key, 0);
+                            return minutesToDue - totalProcessing; // slack
+                        })
+                        .thenComparing(Order::getDueDate, Comparator.nullsLast(Comparator.naturalOrder())));
+            }
+        }
     }
 
     private String getOperationKey(Operation operation) {
@@ -912,8 +1064,7 @@ public class SchedulerService {
                     "No open orders found.");
         }
 
-        openOrders.sort((a, b) ->
-                a.getDueDate().compareTo(b.getDueDate()));
+        sortOrdersByStrategy(openOrders, SchedulingStrategy.MOST_ON_TIME, operationRepository.findAll());
 
         // 1. Generate baseline schedule without breakdown restrictions
         List<ScheduleResult> beforeSchedule =
