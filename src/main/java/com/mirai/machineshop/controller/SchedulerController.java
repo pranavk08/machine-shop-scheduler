@@ -5,18 +5,22 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.validation.annotation.Validated;
 
+import com.mirai.machineshop.dto.ReplanRequest;
+import com.mirai.machineshop.dto.ReplanResultResponse;
 import com.mirai.machineshop.entity.Machine;
 import com.mirai.machineshop.entity.Operator;
+import com.mirai.machineshop.exception.InvalidBusinessRequestException;
 import com.mirai.machineshop.scheduler.ScheduleResult;
 import com.mirai.machineshop.scheduler.SchedulerService;
-import com.mirai.machineshop.exception.InvalidBusinessRequestException;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
@@ -76,6 +80,21 @@ public class SchedulerController {
 
         return schedulerService.scheduleAllOpenOrders();
     }
+
+    @PostMapping("/replan")
+    public ReplanResultResponse replanSchedule(
+            @RequestBody(required = false) ReplanRequest request) {
+
+        LocalDateTime baselineStartTime = (request != null)
+                ? request.baselineStartTime()
+                : null;
+
+        LocalDateTime replanStartTime = (request != null && request.replanStartTime() != null)
+                ? request.replanStartTime()
+                : LocalDateTime.now();
+
+        return schedulerService.replanSchedule(baselineStartTime, replanStartTime);
+    }
     
     @GetMapping("/operators/skill/{skill}")
     public List<Operator> findQualifiedOperators(
@@ -121,7 +140,4 @@ public class SchedulerController {
                 parsedEnd
         );
     }
-    
-   
 }
-

@@ -1,5 +1,6 @@
 package com.mirai.machineshop.scheduler;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -10,6 +11,8 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 
+import com.mirai.machineshop.dto.OperationScheduleDelta;
+import com.mirai.machineshop.dto.ReplanResultResponse;
 import com.mirai.machineshop.entity.Breakdown;
 import com.mirai.machineshop.entity.Changeover;
 import com.mirai.machineshop.entity.Machine;
@@ -95,7 +98,8 @@ public class SchedulerService {
             SchedulingState schedulingState,
             Machine machine,
             LocalDateTime startTime,
-            LocalDateTime endTime) {
+            LocalDateTime endTime,
+            boolean checkBreakdowns) {
 
         boolean noBookingConflict =
                 schedulingState.machineBookings.stream()
@@ -108,8 +112,8 @@ public class SchedulerService {
                                 && endTime.isAfter(
                                         booking.getStartTime()));
 
-        boolean noBreakdownConflict =
-                isMachineAvailableDuringBreakdown(
+        boolean noBreakdownConflict = !checkBreakdowns
+                || isMachineAvailableDuringBreakdown(
                         machine,
                         startTime,
                         endTime);
@@ -156,7 +160,8 @@ public class SchedulerService {
             String requiredMachineType,
             String partFamily,
             LocalDateTime requestedStartTime,
-            int processingMinutes) {
+            int processingMinutes,
+            boolean checkBreakdowns) {
 
         List<Machine> machines =
                 findCapableMachines(requiredMachineType);
@@ -200,7 +205,8 @@ public class SchedulerService {
                         schedulingState,
                         machine,
                         candidateStartTime,
-                        candidateEndTime)) {
+                        candidateEndTime,
+                        checkBreakdowns)) {
 
                     if (earliestStartTime == null
                             || candidateStartTime.isBefore(
@@ -499,7 +505,8 @@ public class SchedulerService {
             String operatorSkill,
             String partFamily,
             LocalDateTime requestedStartTime,
-            int processingMinutes) {
+            int processingMinutes,
+            boolean checkBreakdowns) {
 
         LocalDateTime candidateStartTime = requestedStartTime;
 
@@ -511,7 +518,8 @@ public class SchedulerService {
                             machineType,
                             partFamily,
                             candidateStartTime,
-                            processingMinutes);
+                            processingMinutes,
+                            checkBreakdowns);
 
             if (machineAvailability == null) {
                 return null;
@@ -593,13 +601,15 @@ public class SchedulerService {
         return scheduleOrder(
                 orderId,
                 schedulingStartTime,
-                new SchedulingState());
+                new SchedulingState(),
+                true);
     }
 
     private List<ScheduleResult> scheduleOrder(
             Long orderId,
             LocalDateTime schedulingStartTime,
-            SchedulingState schedulingState) {
+            SchedulingState schedulingState,
+            boolean checkBreakdowns) {
 
         if (!orderRepository.existsById(orderId)) {
             throw new ResourceNotFoundException("Order not found: " + orderId);
@@ -633,7 +643,8 @@ public class SchedulerService {
                             operation.getOperationType(),
                             operation.getOrder().getPartFamily(),
                             nextAvailableTime,
-                            operation.getProcessingTimeMinutes());
+                            operation.getProcessingTimeMinutes(),
+                            checkBreakdowns);
 
             if (availability == null) {
                 throw new SchedulingUnavailableException(
@@ -689,37 +700,271 @@ public class SchedulerService {
 
     public List<ScheduleResult> scheduleAllOpenOrders() {
 
-        SchedulingState schedulingState =
-                new SchedulingState();
-
-        LocalDateTime schedulingStartTime = LocalDateTime.now();
-
         List<Order> openOrders =
-                orderRepository.findByStatusIgnoreCase("OPEN");
+                new ArrayList<>(orderRepository.findByStatusIgnoreCase("OPEN"));
 
         if (openOrders.isEmpty()) {
             throw new SchedulingUnavailableException(
                     "No open orders found.");
         }
 
-        List<ScheduleResult> completeSchedule =
-                new ArrayList<>();
+        openOrders.sort((a, b) ->
+                a.getDueDate().compareTo(b.getDueDate()));
+
+        return generateFullSchedule(
+                openOrders,
+                LocalDateTime.now(),
+                true,
+                null,
+                null);
+    }
+
+    private List<ScheduleResult> generateFullSchedule(
+            List<Order> openOrders,
+            LocalDateTime schedulingStartTime,
+            boolean checkBreakdowns,
+            List<ScheduleResult> baselineSchedule,
+            LocalDateTime lockBeforeTime) {
+
+        SchedulingState schedulingState = new SchedulingState();
+        List<ScheduleResult> completeSchedule = new ArrayList<>();
+
+        Map<Long, ScheduleResult> baselineMap = new HashMap<>();
+        if (baselineSchedule != null) {
+            for (ScheduleResult res : baselineSchedule) {
+                baselineMap.put(res.getOperation().getId(), res);
+            }
+        }
+
+        for (Order order : openOrders) {
+
+            List<Operation> operations = operationRepository
+                    .findAll()
+                    .stream()
+                    .filter(operation ->
+                            operation.getOrder().getId().equals(order.getId()))
+                    .sorted((a, b) ->
+                            Integer.compare(
+                                    a.getSequenceNumber(),
+                                    b.getSequenceNumber()))
+                    .toList();
+
+            LocalDateTime nextAvailableTime = schedulingStartTime;
+
+            for (Operation operation : operations) {
+
+                ScheduleResult baselineOp = baselineMap.get(operation.getId());
+
+                if (lockBeforeTime != null && baselineOp != null
+                        && !baselineOp.getEndTime().isAfter(lockBeforeTime)) {
+
+                    // Preserve locked operation
+                    schedulingState.machineBookings.add(new MachineBooking(
+                            baselineOp.getMachine(),
+                            operation.getOrder().getPartFamily(),
+                            baselineOp.getStartTime(),
+                            baselineOp.getEndTime()));
+
+                    schedulingState.operatorBookings.add(new OperatorBooking(
+                            baselineOp.getOperator(),
+                            baselineOp.getStartTime(),
+                            baselineOp.getEndTime()));
+
+                    completeSchedule.add(baselineOp);
+                    nextAvailableTime = baselineOp.getEndTime();
+                    continue;
+                }
+
+                LocalDateTime earliestStart = (lockBeforeTime != null && nextAvailableTime.isBefore(lockBeforeTime))
+                        ? lockBeforeTime
+                        : nextAvailableTime;
+
+                MachineAvailability availability =
+                        findMachineAndOperatorAvailability(
+                                schedulingState,
+                                operation.getRequiredMachineType(),
+                                operation.getOperationType(),
+                                operation.getOrder().getPartFamily(),
+                                earliestStart,
+                                operation.getProcessingTimeMinutes(),
+                                checkBreakdowns);
+
+                if (availability == null) {
+                    throw new SchedulingUnavailableException(
+                            "No machine and operator available for operation: "
+                                    + operation.getOperationType());
+                }
+
+                Machine machine = availability.getMachine();
+                LocalDateTime machineStartTime = availability.getStartTime();
+                LocalDateTime startTime = availability.getOperationStartTime();
+                LocalDateTime endTime = startTime.plusMinutes(
+                        operation.getProcessingTimeMinutes());
+                Operator operator = availability.getOperator();
+
+                if (operator == null) {
+                    throw new SchedulingUnavailableException(
+                            "No qualified operator available for operation: "
+                                    + operation.getOperationType());
+                }
+
+                MachineBooking booking =
+                        new MachineBooking(
+                                machine,
+                                operation.getOrder().getPartFamily(),
+                                machineStartTime,
+                                endTime);
+
+                schedulingState.machineBookings.add(booking);
+
+                OperatorBooking operatorBooking =
+                        new OperatorBooking(
+                                operator,
+                                startTime,
+                                endTime);
+
+                schedulingState.operatorBookings.add(operatorBooking);
+
+                ScheduleResult result =
+                        new ScheduleResult(
+                                operation,
+                                machine,
+                                operator,
+                                startTime,
+                                endTime);
+
+                completeSchedule.add(result);
+                nextAvailableTime = endTime;
+            }
+        }
+
+        return completeSchedule;
+    }
+
+    public ReplanResultResponse replanSchedule(LocalDateTime replanStartTime) {
+        return replanSchedule(null, replanStartTime);
+    }
+
+    public ReplanResultResponse replanSchedule(
+            LocalDateTime baselineStartTime,
+            LocalDateTime replanStartTime) {
+
+        LocalDateTime effectiveReplanTime = (replanStartTime != null)
+                ? replanStartTime
+                : LocalDateTime.now();
+
+        LocalDateTime effectiveBaselineTime = (baselineStartTime != null)
+                ? baselineStartTime
+                : effectiveReplanTime;
+
+        List<Order> openOrders =
+                new ArrayList<>(orderRepository.findByStatusIgnoreCase("OPEN"));
+
+        if (openOrders.isEmpty()) {
+            throw new SchedulingUnavailableException(
+                    "No open orders found.");
+        }
 
         openOrders.sort((a, b) ->
                 a.getDueDate().compareTo(b.getDueDate()));
 
-        for (Order order : openOrders) {
+        // 1. Generate baseline schedule without breakdown restrictions
+        List<ScheduleResult> beforeSchedule =
+                generateFullSchedule(openOrders, effectiveBaselineTime, false, null, null);
 
-            List<ScheduleResult> orderSchedule =
-                    scheduleOrder(
-                            order.getId(),
-                            schedulingStartTime,
-                            schedulingState);
+        // 2. Generate replanned schedule with breakdown constraints, preserving completed/prior work
+        List<ScheduleResult> afterSchedule =
+                generateFullSchedule(openOrders, effectiveBaselineTime, true, beforeSchedule, effectiveReplanTime);
 
-            completeSchedule.addAll(orderSchedule);
+        // 3. Compute Before vs After impact deltas and summary
+        List<OperationScheduleDelta> impactDeltas = new ArrayList<>();
+        int operationsMovedCount = 0;
+        int machinesReassignedCount = 0;
+        int operatorsReassignedCount = 0;
+        int ordersDelayedCount = 0;
+
+        Map<Long, ScheduleResult> beforeOpMap = new HashMap<>();
+        for (ScheduleResult res : beforeSchedule) {
+            beforeOpMap.put(res.getOperation().getId(), res);
         }
 
-        return completeSchedule;
+        for (ScheduleResult afterRes : afterSchedule) {
+            Long opId = afterRes.getOperation().getId();
+            ScheduleResult beforeRes = beforeOpMap.get(opId);
+
+            if (beforeRes == null) {
+                continue;
+            }
+
+            boolean machineChanged = !afterRes.getMachine().getId()
+                    .equals(beforeRes.getMachine().getId());
+
+            boolean operatorChanged = !afterRes.getOperator().getId()
+                    .equals(beforeRes.getOperator().getId());
+
+            boolean timeChanged = !afterRes.getStartTime().equals(beforeRes.getStartTime())
+                    || !afterRes.getEndTime().equals(beforeRes.getEndTime());
+
+            long delayMinutes = Math.max(
+                    0,
+                    Duration.between(beforeRes.getEndTime(), afterRes.getEndTime()).toMinutes());
+
+            if (machineChanged || operatorChanged || timeChanged) {
+                operationsMovedCount++;
+                if (machineChanged) {
+                    machinesReassignedCount++;
+                }
+                if (operatorChanged) {
+                    operatorsReassignedCount++;
+                }
+
+                impactDeltas.add(new OperationScheduleDelta(
+                        afterRes.getOperation().getOrder().getOrderNumber(),
+                        afterRes.getOperation().getSequenceNumber(),
+                        afterRes.getOperation().getOperationType(),
+                        beforeRes.getMachine().getMachineCode(),
+                        afterRes.getMachine().getMachineCode(),
+                        beforeRes.getOperator().getName(),
+                        afterRes.getOperator().getName(),
+                        beforeRes.getStartTime(),
+                        afterRes.getStartTime(),
+                        beforeRes.getEndTime(),
+                        afterRes.getEndTime(),
+                        delayMinutes,
+                        machineChanged,
+                        operatorChanged,
+                        timeChanged));
+            }
+        }
+
+        // Check delayed orders based on final operation completion
+        for (Order order : openOrders) {
+            ScheduleResult latestBefore = beforeSchedule.stream()
+                    .filter(res -> res.getOperation().getOrder().getId().equals(order.getId()))
+                    .max((a, b) -> a.getEndTime().compareTo(b.getEndTime()))
+                    .orElse(null);
+
+            ScheduleResult latestAfter = afterSchedule.stream()
+                    .filter(res -> res.getOperation().getOrder().getId().equals(order.getId()))
+                    .max((a, b) -> a.getEndTime().compareTo(b.getEndTime()))
+                    .orElse(null);
+
+            if (latestBefore != null && latestAfter != null
+                    && latestAfter.getEndTime().isAfter(latestBefore.getEndTime())) {
+                ordersDelayedCount++;
+            }
+        }
+
+        return new ReplanResultResponse(
+                effectiveReplanTime,
+                afterSchedule.size(),
+                operationsMovedCount,
+                ordersDelayedCount,
+                machinesReassignedCount,
+                operatorsReassignedCount,
+                beforeSchedule,
+                afterSchedule,
+                impactDeltas);
     }
 
     private static class SchedulingState {
