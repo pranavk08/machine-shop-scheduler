@@ -44,15 +44,6 @@ public class SchedulerService {
 	
 	private final OrderRepository orderRepository;
 	
-	private final List<MachineBooking> machineBookings =
-	        new ArrayList<>();
-
-	private final List<OperatorBooking> operatorBookings =
-	        new ArrayList<>();
-
-	private final Map<String, Integer> changeoverCache =
-	        new HashMap<>();
-	
 	private final OperatorShiftRepository operatorShiftRepository;
 	
 
@@ -61,12 +52,13 @@ public class SchedulerService {
     private final OperationRepository operationRepository;
     
     private boolean isMachineFree(
+            SchedulingState schedulingState,
             Machine machine,
             LocalDateTime startTime,
             LocalDateTime endTime) {
 
         boolean noBookingConflict =
-                machineBookings.stream()
+                schedulingState.machineBookings.stream()
                         .filter(booking ->
                                 booking.getMachine().getId()
                                         .equals(machine.getId()))
@@ -104,11 +96,12 @@ public class SchedulerService {
     }
     
     private boolean isOperatorFree(
+            SchedulingState schedulingState,
             Operator operator,
             LocalDateTime startTime,
             LocalDateTime endTime) {
 
-        return operatorBookings.stream()
+        return schedulingState.operatorBookings.stream()
                 .filter(booking ->
                         booking.getOperator().getId()
                                 .equals(operator.getId()))
@@ -151,6 +144,7 @@ public class SchedulerService {
     
     
     private MachineAvailability findMachineAvailableAt(
+            SchedulingState schedulingState,
             String requiredMachineType,
             String partFamily,
             LocalDateTime requestedStartTime,
@@ -176,11 +170,13 @@ public class SchedulerService {
 
             String previousPartFamily =
                     getPreviousPartFamily(
+                            schedulingState,
                             machine,
                             candidateStartTime);
 
             int changeoverMinutes =
                     getChangeoverMinutes(
+                            schedulingState,
                             machine,
                             previousPartFamily,
                             partFamily);
@@ -198,6 +194,7 @@ public class SchedulerService {
                 
 
                 if (isMachineFree(
+                        schedulingState,
                         machine,
                         candidateStartTime,
                         candidateEndTime)) {
@@ -220,6 +217,7 @@ public class SchedulerService {
 
                 LocalDateTime nextTime =
                         getNextMachineFreeTime(
+                                schedulingState,
                                 machine,
                                 candidateStartTime);
 
@@ -233,11 +231,13 @@ public class SchedulerService {
 
                 previousPartFamily =
                         getPreviousPartFamily(
+                                schedulingState,
                                 machine,
                                 candidateStartTime);
 
                 changeoverMinutes =
                         getChangeoverMinutes(
+                                schedulingState,
                                 machine,
                                 previousPartFamily,
                                 partFamily);
@@ -258,10 +258,11 @@ public class SchedulerService {
     
     
     private LocalDateTime getNextMachineFreeTime(
+            SchedulingState schedulingState,
             Machine machine,
             LocalDateTime currentTime) {
 
-        return machineBookings.stream()
+        return schedulingState.machineBookings.stream()
                 .filter(booking ->
                         booking.getMachine().getId()
                                 .equals(machine.getId()))
@@ -274,10 +275,11 @@ public class SchedulerService {
     }
     
     private String getPreviousPartFamily(
+            SchedulingState schedulingState,
             Machine machine,
             LocalDateTime currentTime) {
 
-        return machineBookings.stream()
+        return schedulingState.machineBookings.stream()
                 .filter(booking ->
                         booking.getMachine().getId()
                                 .equals(machine.getId()))
@@ -326,6 +328,21 @@ public class SchedulerService {
             LocalDateTime startTime,
             LocalDateTime endTime) {
 
+        return findAvailableOperators(
+                new SchedulingState(),
+                requiredSkill,
+                date,
+                startTime,
+                endTime);
+    }
+
+    private List<Operator> findAvailableOperators(
+            SchedulingState schedulingState,
+            String requiredSkill,
+            LocalDate date,
+            LocalDateTime startTime,
+            LocalDateTime endTime) {
+
         List<Operator> qualifiedOperators =
                 findQualifiedOperators(requiredSkill);
 
@@ -360,6 +377,7 @@ public class SchedulerService {
 
             if (worksDuringOperation
                     && isOperatorFree(
+                            schedulingState,
                             operator,
                             startTime,
                             endTime)) {
@@ -454,6 +472,7 @@ public class SchedulerService {
     }
     
     private LocalDateTime findEarliestOperatorStartTime(
+            SchedulingState schedulingState,
             String requiredSkill,
             LocalDateTime requestedStartTime,
             int processingMinutes) {
@@ -467,6 +486,7 @@ public class SchedulerService {
 
             List<Operator> operators =
                     findAvailableOperators(
+                            schedulingState,
                             requiredSkill,
                             candidateStartTime.toLocalDate(),
                             candidateStartTime,
@@ -484,6 +504,7 @@ public class SchedulerService {
     }
     
     private MachineAvailability findMachineAndOperatorAvailability(
+                SchedulingState schedulingState,
     		    String machineType,
     	        String operatorSkill,
     	        String partFamily,
@@ -496,6 +517,7 @@ public class SchedulerService {
 
         	MachineAvailability machineAvailability =
         	        findMachineAvailableAt(
+                        schedulingState,
         	                machineType,
         	                partFamily,
         	                candidateStartTime,
@@ -517,6 +539,7 @@ public class SchedulerService {
 
             List<Operator> operators =
                     findAvailableOperators(
+                            schedulingState,
                             operatorSkill,
                             operationStartTime.toLocalDate(),
                             operationStartTime,
@@ -541,6 +564,7 @@ public class SchedulerService {
     
     
     private int getChangeoverMinutes(
+            SchedulingState schedulingState,
             Machine machine,
             String fromPartFamily,
             String toPartFamily) {
@@ -556,8 +580,8 @@ public class SchedulerService {
                         + "|"
                         + toPartFamily.toUpperCase();
 
-        if (changeoverCache.containsKey(key)) {
-            return changeoverCache.get(key);
+        if (schedulingState.changeoverCache.containsKey(key)) {
+            return schedulingState.changeoverCache.get(key);
         }
 
         int minutes = changeoverRepository
@@ -568,7 +592,7 @@ public class SchedulerService {
                 .map(Changeover::getChangeoverMinutes)
                 .orElse(0);
 
-        changeoverCache.put(key, minutes);
+        schedulingState.changeoverCache.put(key, minutes);
 
         return minutes;
     }
@@ -578,7 +602,18 @@ public class SchedulerService {
     
     public List<ScheduleResult> scheduleOrder(
             Long orderId,
-            LocalDateTime schedulingStartTime) { {
+            LocalDateTime schedulingStartTime) {
+
+        return scheduleOrder(
+                orderId,
+                schedulingStartTime,
+                new SchedulingState());
+    }
+
+    private List<ScheduleResult> scheduleOrder(
+            Long orderId,
+            LocalDateTime schedulingStartTime,
+            SchedulingState schedulingState) { {
 
         List<Operation> operations = operationRepository
                 .findAll()
@@ -606,6 +641,7 @@ public class SchedulerService {
 
             MachineAvailability availability =
                     findMachineAndOperatorAvailability(
+                            schedulingState,
                             operation.getRequiredMachineType(),
                             operation.getOperationType(),
                             operation.getOrder().getPartFamily(),
@@ -646,7 +682,7 @@ public class SchedulerService {
                             machineStartTime,
                             endTime);
 
-            machineBookings.add(booking);
+            schedulingState.machineBookings.add(booking);
 
             OperatorBooking operatorBooking =
                     new OperatorBooking(
@@ -654,7 +690,7 @@ public class SchedulerService {
                             startTime,
                             endTime);
 
-            operatorBookings.add(operatorBooking);
+            schedulingState.operatorBookings.add(operatorBooking);
 
             ScheduleResult result =
                     new ScheduleResult(
@@ -675,8 +711,8 @@ public class SchedulerService {
     
             public List<ScheduleResult> scheduleAllOpenOrders() {
 
-                machineBookings.clear();
-                operatorBookings.clear();
+                SchedulingState schedulingState =
+                        new SchedulingState();
 
                 LocalDateTime schedulingStartTime = LocalDateTime.now();
 
@@ -699,11 +735,24 @@ public class SchedulerService {
                     List<ScheduleResult> orderSchedule =
                             scheduleOrder(
                                     order.getId(),
-                                    schedulingStartTime);
+                                    schedulingStartTime,
+                                    schedulingState);
 
                     completeSchedule.addAll(orderSchedule);
                 }
 
                 return completeSchedule;
             }
+
+    private static class SchedulingState {
+
+        private final List<MachineBooking> machineBookings =
+                new ArrayList<>();
+
+        private final List<OperatorBooking> operatorBookings =
+                new ArrayList<>();
+
+        private final Map<String, Integer> changeoverCache =
+                new HashMap<>();
+    }
 }
