@@ -350,6 +350,10 @@ public class SchedulerService {
 
         for (Operator operator : qualifiedOperators) {
 
+            if (!operator.isAvailable()) {
+                continue;
+            }
+
             List<OperatorShift> shifts =
                     operatorShiftRepository
                             .findByOperatorIdAndWorkDateAndAvailableTrue(
