@@ -1,60 +1,69 @@
 # 🏭 Machine Shop Scheduler
 
-### Production Scheduling & Shop-Floor Management System
+## Production Scheduling & Shop-Floor Management System
 
-A full-stack production scheduling system designed for a precision machine shop environment. The system models machines, operators, customers, orders, multi-step operations, machine capabilities, shifts, breakdowns, and production schedules through a Spring Boot backend and React frontend.
+A full-stack production scheduling system for a precision machine shop environment.
 
-The project is designed around the **Machine Shop Scheduler — Sridhar Precision Works** technical assessment, with a focus on realistic manufacturing constraints and disruption-aware production planning.
+The application models machines, operators, customers, orders, multi-step operations, machine capabilities, shifts, breakdowns, changeovers, scheduling strategies, disruption recovery, and production costs.
 
----
-
-## 📌 Project Overview
-
-Sridhar Precision Works operates a multi-machine production floor where every order may require several sequential manufacturing operations.
-
-A typical production route may look like:
-
-```text
-Turning
-   ↓
-Milling
-   ↓
-Drilling
-   ↓
-Grinding
-   ↓
-Inspection
-```
-
-Scheduling becomes difficult because:
-
-* Different operations require different machine types.
-* Operators have different skills.
-* Machines have limited availability.
-* Orders have different due dates and customer priorities.
-* Operations must respect their sequence.
-* Machine breakdowns can affect downstream operations.
-* Changeovers can consume production capacity.
-* Production schedules need to be recalculated when shop-floor conditions change.
-
-This project provides a foundation for managing these constraints through a centralized production scheduling application.
+Built with Spring Boot + MySQL + React/Vite, the system is designed around the Machine Shop Scheduler technical assessment.
 
 ---
 
-# 🎯 Objectives
+## 🎯 Project Objective
 
-The system aims to:
+The main objective is to help a production supervisor answer:
 
-1. Manage machines and machine capabilities.
-2. Manage operators, skills and shifts.
-3. Manage customers and customer priorities.
-4. Manage production orders and operations.
-5. Generate production schedules.
-6. Respect machine and operator availability.
-7. Track machine breakdowns.
-8. Provide a supervisor-friendly production dashboard.
-9. Support disruption-based rescheduling.
-10. Provide production and scheduling information through a web interface.
+"What should we run, on which machine, with which operator, and what should we do when reality changes?"
+
+The current application demonstrates:
+
+- Production order and resource management
+- Constraint-aware scheduling
+- Machine and operator availability
+- Operator skill matching
+- Shift-based scheduling
+- Sequence-dependent changeovers
+- Machine breakdown reporting
+- Dynamic disruption replanning
+- Before vs After schedule comparison
+- Overtime calculation
+- Late-delivery penalty calculation
+- Disruption cost analysis
+- Three scheduling strategies
+- Strategy comparison and recommendation
+- Supervisor dashboard
+- Demo login and protected frontend routes
+
+---
+
+# 🏭 Production Flow
+
+A typical manufacturing route can contain several sequential operations:
+
+    Turning
+       ↓
+    Milling
+       ↓
+    Drilling
+       ↓
+    Grinding
+       ↓
+    Inspection
+
+The scheduler must respect:
+
+- Machine capability
+- Operator skills
+- Operator shifts
+- Machine availability
+- Operation sequence
+- Customer priority
+- Due dates
+- Machine breakdowns
+- Changeovers
+- Machine conflicts
+- Operator conflicts
 
 ---
 
@@ -62,769 +71,740 @@ The system aims to:
 
 ## Backend
 
-* Java 17
-* Spring Boot
-* Spring Data JPA
-* Hibernate
-* Maven
-* MySQL
-* REST APIs
+- Java 17
+- Spring Boot
+- Spring Data JPA
+- Hibernate
+- Maven
+- MySQL
+- REST APIs
 
 ## Frontend
 
-* React
-* Vite
-* React Router
-* Tailwind CSS
-* JavaScript / JSX
+- React
+- Vite
+- React Router
+- Tailwind CSS
+- JavaScript / JSX
 
 ## Development Tools
 
-* Eclipse / Spring Tool Suite
-* Visual Studio Code
-* MySQL
-* Postman
-* Git
-* GitHub
+- Eclipse / Spring Tool Suite
+- Visual Studio Code
+- MySQL
+- Postman
+- Git
+- GitHub
 
 ---
 
-# 🏗️ System Architecture
+# 🏗️ Architecture
 
-```text
-                         ┌──────────────────────┐
-                         │      React UI        │
-                         │                      │
-                         │ Dashboard             │
-                         │ Orders                │
-                         │ Schedule              │
-                         │ Machines              │
-                         │ Operators             │
-                         │ Disruptions           │
-                         │ Login                 │
-                         └──────────┬───────────┘
-                                    │
-                              REST API / HTTP
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │   Spring Boot API    │
-                         │                      │
-                         │ Controllers          │
-                         │ Services             │
-                         │ Scheduler            │
-                         │ Repositories         │
-                         └──────────┬───────────┘
-                                    │
-                                  JPA
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │        MySQL         │
-                         │                      │
-                         │ Machines             │
-                         │ Operators            │
-                         │ Orders               │
-                         │ Operations           │
-                         │ Customers             │
-                         │ Shifts               │
-                         │ Skills               │
-                         │ Breakdowns            │
-                         │ Changeovers           │
-                         └──────────────────────┘
-```
+    React Frontend
+          ↓
+      REST APIs
+          ↓
+    Spring Boot
+          ↓
+    Controllers
+          ↓
+       Services
+          ↓
+     Repositories
+          ↓
+        MySQL
 
----
+The backend follows a standard layered architecture:
 
-# 📂 Project Structure
-
-```text
-machine-shop-scheduler/
-│
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   └── Sidebar.jsx
-│   │   │
-│   │   ├── page/
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── Orders.jsx
-│   │   │   ├── Schedule.jsx
-│   │   │   ├── Machines.jsx
-│   │   │   ├── Operators.jsx
-│   │   │   ├── Disruptions.jsx
-│   │   │   └── Login.jsx
-│   │   │
-│   │   ├── services/
-│   │   │   └── api.js
-│   │   │
-│   │   ├── App.jsx
-│   │   └── index.css
-│   │
-│   ├── package.json
-│   └── vite.config.js
-│
-├── src/
-│   ├── main/
-│   │   ├── java/com/mirai/machineshop/
-│   │   │
-│   │   └── resources/
-│   │
-│   └── test/
-│
-├── pom.xml
-├── mvnw
-├── mvnw.cmd
-├── .gitignore
-└── README.md
-```
-
----
-
-# ⚙️ Backend Architecture
-
-The backend follows a layered Spring Boot architecture.
-
-```text
-Controller
-    ↓
-Service
-    ↓
-Repository
-    ↓
-Entity
-    ↓
-MySQL
-```
-
-The scheduling logic is separated into a dedicated scheduler package:
-
-```text
-scheduler/
-├── SchedulerService.java
-├── MachineAvailability.java
-├── MachineBooking.java
-├── OperatorBooking.java
-└── ScheduleResult.java
-```
-
-This separation allows the scheduling logic to evolve independently from the REST API and database layers.
-
----
-
-# 🗃️ Domain Model
-
-The backend currently models the following major manufacturing concepts.
-
-### Machine
-
-Represents production equipment.
-
-Example attributes:
-
-```text
-machineCode
-name
-type
-available
-```
-
-### Machine Capability
-
-Defines which operations or machine types a machine can support.
-
-### Operator
-
-Represents a production operator.
-
-Example information:
-
-```text
-operatorCode
-name
-available
-```
-
-### Operator Skill
-
-Represents the manufacturing skills available to an operator.
-
-### Operator Shift
-
-Associates operators with production shifts.
-
-### Shift
-
-Represents a production working period.
-
-### Customer
-
-Represents a customer and their business priority.
-
-Customer information includes customer code, name and customer tier.
-
-### Order
-
-Represents a production order.
-
-Orders contain information such as:
-
-```text
-order number
-customer
-quantity
-part family
-due date
-status
-```
-
-### Operation
-
-Represents an individual manufacturing step belonging to an order.
-
-Example:
-
-```text
-Sequence: 1
-Operation: TURNING
-Processing Time: 90 minutes
-Required Machine Type: TURNING
-```
-
-### Changeover
-
-Represents sequence-dependent production setup/changeover information.
-
-### Breakdown
-
-Represents machine downtime and breakdown periods.
+    Controller
+        ↓
+      Service
+        ↓
+    Repository
+        ↓
+      Entity
+        ↓
+      MySQL
 
 ---
 
 # 🧠 Scheduling Engine
 
-The scheduling engine is implemented in:
+The main scheduling engine is implemented in:
 
-```text
-src/main/java/com/mirai/machineshop/scheduler/
-```
+    src/main/java/com/mirai/machineshop/scheduler/
 
-The current scheduling implementation considers the relationship between:
+The scheduling flow is:
 
-```text
-Orders
-   ↓
-Operations
-   ↓
-Machines
-   ↓
-Machine Availability
-   ↓
-Operators
-   ↓
-Operator Availability
-   ↓
-Production Schedule
-```
+    Orders
+       ↓
+    Operations & sequence dependencies
+       ↓
+    Machine capabilities
+       ↓
+    Machine availability / breakdowns
+       ↓
+    Operator skills / shifts
+       ↓
+    Changeovers
+       ↓
+    Production Schedule
 
-The generated schedule exposes information such as:
+The generated schedule contains:
 
-* Order
-* Operation
-* Machine
-* Operator
-* Start time
-* End time
+- Order
+- Operation
+- Sequence number
+- Machine
+- Operator
+- Start time
+- End time
 
-The frontend consumes the schedule through the scheduler API.
+---
+
+# ⚙️ Scheduling Constraints
+
+The scheduling engine considers:
+
+- Machine capability matching
+- Operator skill matching
+- Operation sequence dependencies
+- Machine availability
+- Operator availability
+- Shift coverage
+- Machine breakdown windows
+- Machine booking conflicts
+- Operator booking conflicts
+- Sequence-dependent changeovers
+
+---
+
+# 🏆 Three Scheduling Strategies
+
+The application supports three planning strategies.
+
+## 1. 🎯 MOST_ON_TIME
+
+Prioritizes:
+
+- Customer tier
+- Earlier due dates
+- Critical orders
+
+Goal:
+
+Maximize on-time delivery and reduce late-delivery penalties.
+
+---
+
+## 2. 💰 CHEAPEST_PRODUCTION
+
+Groups compatible part families to reduce unnecessary setup and changeover time.
+
+Goal:
+
+- Reduce changeover impact
+- Reduce overtime
+- Reduce production cost
+- Reduce late-delivery exposure
+
+---
+
+## 3. 🛡️ MOST_ROBUST
+
+Prioritizes:
+
+- Bottleneck operations
+- Tight schedule slack
+- Critical resources
+
+Goal:
+
+Create additional scheduling buffer and improve resilience against disruptions.
+
+---
+
+# ⚖️ Strategy Comparison
+
+The application can evaluate all three strategies against the same open-order dataset.
+
+Each strategy is evaluated using:
+
+- Generated production schedule
+- Makespan
+- Overtime hours
+- Overtime cost
+- Late orders
+- Late-delivery penalties
+- Changeover cost
+- Total financial cost
+
+The system dynamically recommends the best strategy using:
+
+    Lowest Total Cost
+          ↓
+    Lowest Late-Order Count
+          ↓
+    Lowest Makespan
+
+The winning strategy is calculated at runtime and is not hardcoded.
+
+---
+
+# ⚡ Machine Breakdown & Dynamic Replanning
+
+A supervisor can report a machine breakdown from the Disruptions page.
+
+The workflow is:
+
+    Report Breakdown
+          ↓
+    Identify affected operations
+          ↓
+    Preserve completed work
+          ↓
+    Find alternative machines/operators
+          ↓
+    Wait for repair if no alternative exists
+          ↓
+    Generate revised schedule
+          ↓
+    Compare Before vs After
+          ↓
+    Calculate financial impact
+
+The replanning engine considers:
+
+- Completed work preservation
+- Affected operations
+- Alternative capable machines
+- Qualified operators
+- Machine breakdown windows
+- Operation dependencies
+- Machine conflicts
+- Operator conflicts
+
+Example:
+
+    CNC-01 breaks down
+          ↓
+    Turning operation is affected
+          ↓
+    CNC-02 / CNC-03 / ... are evaluated
+          ↓
+    Operation is reassigned
+          ↓
+    Revised schedule is generated
+
+For a single-machine bottleneck such as GRIND-01, the operation waits until the breakdown ends when no alternative machine is available.
+
+---
+
+# 📊 Before vs After Impact Analysis
+
+Replanning produces a comparison between the original and revised schedules.
+
+The system tracks:
+
+- Operations moved
+- Orders delayed
+- Machines reassigned
+- Operators reassigned
+- Start-time changes
+- End-time changes
+- Per-operation schedule deltas
+
+Example:
+
+    BEFORE
+
+    ORD-001
+    Machine: CNC-01
+    Time: 10:00 → 11:30
+
+
+    MACHINE BREAKDOWN
+
+    CNC-01 unavailable
+
+
+    AFTER
+
+    ORD-001
+    Machine: CNC-02
+    Time: 10:00 → 11:30
+
+---
+
+# 💰 Overtime & Penalty Cost Analysis
+
+The application calculates financial impact from the generated schedule.
+
+Total disruption cost is calculated using:
+
+    Total Cost
+        =
+    Overtime Cost
+        +
+    Late Delivery Penalties
+        +
+    Changeover Cost
+
+---
+
+## 💵 Configurable Cost Rates
+
+The current default configuration is:
+
+    scheduler.cost.regular-shift-capacity-minutes=480
+    scheduler.cost.overtime-hourly-rate=500.0
+    scheduler.cost.tier1-penalty-hourly-rate=150.0
+    scheduler.cost.tier2-penalty-hourly-rate=75.0
+    scheduler.cost.changeover-hourly-rate=300.0
+
+These values are configurable through application properties.
+
+---
+
+## ⏱️ Overtime Calculation
+
+For every operator and work date:
+
+    Regular Shift Capacity = 480 minutes
+
+    Overtime Minutes =
+    max(0, Scheduled Minutes - 480)
+
+    Overtime Cost =
+    Overtime Hours × Overtime Hourly Rate
+
+Example:
+
+    Scheduled time = 600 minutes
+    Regular capacity = 480 minutes
+
+    Overtime = 120 minutes
+              = 2 hours
+
+    Overtime Cost = 2 × ₹500
+                  = ₹1,000
+
+---
+
+## 🚚 Late Delivery Penalty
+
+For every order:
+
+    Completion Time =
+    Latest operation end time
+
+    Delay =
+    max(0, Completion Time - Due Date)
+
+Penalty is calculated based on customer tier:
+
+    TIER-1 = ₹150 / late hour
+
+    TIER-2 = ₹75 / late hour
+
+The system displays:
+
+- Late orders
+- Customer tier
+- Due date
+- Scheduled completion
+- Delay hours
+- Penalty rate
+- Penalty exposure
 
 ---
 
 # 🔌 REST API
 
-The backend exposes REST endpoints for the main production entities.
+## Machines
 
-Examples include:
+    GET    /api/machines
+    GET    /api/machines/{id}
+    POST   /api/machines
+    DELETE /api/machines/{id}
 
-```text
-/api/machines
-/api/operators
-/api/orders
-/api/breakdowns
-/api/scheduler/orders/schedule
-```
+## Operators
 
-### Machine API
+    GET /api/operators
 
-```http
-GET /api/machines
-GET /api/machines/{id}
-POST /api/machines
-DELETE /api/machines/{id}
-```
+## Orders
 
-### Schedule API
+    GET /api/orders
 
-```http
-GET /api/scheduler/orders/schedule
-```
+## Breakdowns
 
-The schedule endpoint returns the generated production schedule containing the operation, machine, operator and planned start/end times.
+    GET  /api/breakdowns
+    POST /api/breakdowns
+
+Example:
+
+    POST /api/breakdowns
+
+Request:
+
+    {
+      "machineId": 1,
+      "startTime": "2026-08-28T10:00:00",
+      "endTime": "2026-08-28T18:00:00",
+      "reason": "Bearing failure on spindle"
+    }
+
+## Scheduling
+
+    GET /api/scheduler/orders/schedule
+
+    GET /api/scheduler/orders/schedule?strategy=MOST_ON_TIME
+
+    GET /api/scheduler/orders/schedule?strategy=CHEAPEST_PRODUCTION
+
+    GET /api/scheduler/orders/schedule?strategy=MOST_ROBUST
+
+    GET /api/scheduler/strategies/compare
+
+    POST /api/scheduler/replan
+
+The strategy parameter is optional, so the existing scheduling endpoint remains backward compatible.
 
 ---
 
 # 🖥️ Frontend
 
-The React application provides a supervisor-oriented interface.
+## 🔐 Demo Login
 
-## Dashboard
+The application includes a demo supervisor login.
 
-Provides a centralized overview of the production environment.
+    Username: admin
+    Password: admin123
 
-The dashboard consumes backend data for:
+The authentication is intentionally client-side demo authentication using browser localStorage.
 
-* Machines
-* Operators
-* Open orders
-* Production information
+Protected routes include:
 
----
+    /dashboard
+    /orders
+    /schedule
+    /machines
+    /operators
+    /disruptions
 
-## Orders
-
-Displays production orders retrieved from the Spring Boot API.
-
-The order information provides visibility into the current production workload.
-
----
-
-## Production Schedule
-
-Displays the generated production schedule.
-
-Current schedule information includes:
-
-```text
-Order
-Operation
-Machine
-Operator
-Start
-End
-```
-
-The schedule is retrieved dynamically from the backend scheduler.
+This authentication is intended only for demonstration purposes and is not production-grade security.
 
 ---
 
-## Machines
+# 📊 Dashboard
 
-Provides a dedicated machine-monitoring screen.
+The Dashboard provides a supervisor-oriented production overview.
 
-The page is intended to show:
+It displays:
 
-* Machine identification
-* Machine type
-* Availability
-* Production status
-* Machine capability information
-
----
-
-## Operators
-
-Provides operator visibility, including:
-
-* Operator identity
-* Skills
-* Availability
-* Shift information
+- Open orders
+- Machines
+- Operators
+- On-time rate
+- Production status
+- Machine status
 
 ---
 
-## Disruptions
+# 📦 Orders
 
-Provides a dedicated interface for production disruptions such as machine breakdowns.
+The Orders page displays open production orders including:
 
-This screen is intended to become the main supervisor workflow for:
-
-```text
-Report disruption
-       ↓
-Recalculate schedule
-       ↓
-Compare old vs new plan
-       ↓
-Show production impact
-       ↓
-Show cost impact
-```
+- Order number
+- Customer
+- Part family
+- Quantity
+- Due date
+- Status
 
 ---
 
-## Login
+# 📅 Production Schedule
 
-The frontend contains a login screen as the entry point for the supervisor-facing application.
+The Schedule page provides:
 
-Authentication/authorization is currently a UI-level feature and is not yet a complete production-grade security system.
-
----
-
-# 📊 Current Implementation Status
-
-| Capability                | Status        |
-| ------------------------- | ------------- |
-| React frontend            | ✅ Implemented |
-| Spring Boot backend       | ✅ Implemented |
-| MySQL persistence         | ✅ Implemented |
-| Machine management        | ✅ Implemented |
-| Machine capabilities      | ✅ Implemented |
-| Operator management       | ✅ Implemented |
-| Operator skills           | ✅ Implemented |
-| Shift model               | ✅ Implemented |
-| Customer model            | ✅ Implemented |
-| Production orders         | ✅ Implemented |
-| Multi-operation routing   | ✅ Implemented |
-| Changeover model          | ✅ Implemented |
-| Breakdown model           | ✅ Implemented |
-| Basic schedule generation | ✅ Implemented |
-| Machine availability      | ✅ Implemented |
-| Operator availability     | ✅ Implemented |
-| Dashboard                 | ✅ Implemented |
-| Orders UI                 | ✅ Implemented |
-| Schedule UI               | ✅ Implemented |
-| Machines UI               | ✅ Implemented |
-| Operators UI              | ✅ Implemented |
-| Disruptions UI            | ✅ Implemented |
-| Login UI                  | ✅ Implemented |
-| GitHub repository         | ✅ Implemented |
+- Generated production schedule
+- Scheduling strategy selector
+- Machine assignment
+- Operator assignment
+- Start and end times
+- Strategy comparison
+- Recommended strategy
 
 ---
 
-# 🚧 Advanced Scheduling Roadmap
+# 🏭 Machines
 
-The project is intentionally being developed in stages.
+The Machines page displays:
 
-The following capabilities are the major remaining implementation areas.
-
-## 1. Disruption-Based Replanning
-
-When a machine breaks down, the scheduler should automatically regenerate the affected production plan.
-
-Example:
-
-```text
-Machine CNC-01
-       ↓
-8-hour breakdown
-       ↓
-Affected operations identified
-       ↓
-Alternative machines/operators evaluated
-       ↓
-Schedule regenerated
-       ↓
-Delivery impact calculated
-```
+- Machine code
+- Machine name
+- Machine type
+- Availability
+- Workshop machine inventory
 
 ---
 
-## 2. Before vs After Schedule Comparison
+# 👷 Operators
 
-The system should show exactly what changed after replanning.
+The Operators page displays:
 
-Example:
-
-```text
-BEFORE
-
-ORD-001
-CNC-01
-10:00 → 11:30
-
-
-DISRUPTION
-
-CNC-01 unavailable
-
-
-AFTER
-
-ORD-001
-CNC-02
-14:00 → 15:30
-```
-
-The UI should summarize:
-
-```text
-Operations moved
-Orders affected
-Orders delayed
-Machines reassigned
-Operators reassigned
-```
+- Operator code
+- Operator name
+- Availability
+- Operator workforce information
 
 ---
 
-# 💰 Disruption Cost Analysis
+# ⚡ Disruptions & Cost Analysis
 
-The assessment requires the scheduler to evaluate the financial consequences of disruptions.
+The Disruptions page provides:
 
-The target cost model is:
-
-```text
-Total Disruption Cost
-        =
-Overtime Cost
-+
-Late Delivery Penalties
-+
-Wasted Changeover Cost
-```
-
-The final system should expose these values in the disruption analysis screen.
-
-Example:
-
-```text
-Overtime Cost             ₹18,000
-Late Penalty Exposure     ₹25,000
-Wasted Changeovers         ₹4,500
-----------------------------------
-Total Impact              ₹47,500
-```
+- Machine breakdown history
+- Report Breakdown
+- Replan Schedule
+- Before vs After comparison
+- Operations shifted
+- Machines reassigned
+- Operators reassigned
+- Orders delayed
+- Overtime cost
+- Late-delivery penalty exposure
+- Total disruption cost
+- Operator overtime breakdown
+- Late-order penalty breakdown
 
 ---
 
-# ⏱️ Overtime Planning
+# 📂 Project Structure
 
-The scheduler should compare the cost of overtime against the cost of delayed delivery.
-
-Example:
-
-```text
-Scenario A
-Overtime = ₹15,000
-Penalty  = ₹40,000
-
-Decision → Use overtime
-```
-
-versus:
-
-```text
-Scenario B
-Overtime = ₹20,000
-Penalty  = ₹10,000
-
-Decision → Accept delay
-```
-
-This allows production planning to become a cost-based decision rather than simply attempting to finish everything as early as possible.
-
----
-
-# 🔄 Sequence-Dependent Changeovers
-
-Production sequence affects capacity.
-
-Example:
-
-```text
-Same part family
-SHAFT → SHAFT
-Changeover = 20 minutes
-
-
-Different part family
-SHAFT → HOUSING
-Changeover = 180 minutes
-```
-
-The scheduler should use the changeover matrix when deciding operation sequence.
-
-This prevents the system from treating every machine transition as having zero setup cost.
-
----
-
-# 📦 Material Delay Handling
-
-Future disruption scenarios should include late raw material.
-
-Example:
-
-```text
-ORD-015
-Material available: 14:00
-
-Operations before 14:00
-→ cannot start
-
-Scheduler
-→ moves other eligible work forward
-→ reschedules ORD-015
-→ calculates delivery impact
-```
+    machine-shop-scheduler/
+    │
+    ├── frontend/
+    │   ├── src/
+    │   │   ├── components/
+    │   │   │   ├── Sidebar.jsx
+    │   │   │   └── ProtectedRoute.jsx
+    │   │   │
+    │   │   ├── page/
+    │   │   │   ├── Dashboard.jsx
+    │   │   │   ├── Orders.jsx
+    │   │   │   ├── Schedule.jsx
+    │   │   │   ├── Machines.jsx
+    │   │   │   ├── Operators.jsx
+    │   │   │   ├── Disruptions.jsx
+    │   │   │   └── Login.jsx
+    │   │   │
+    │   │   ├── services/
+    │   │   │   └── api.js
+    │   │   │
+    │   │   ├── App.jsx
+    │   │   └── index.css
+    │   │
+    │   ├── package.json
+    │   └── vite.config.js
+    │
+    ├── src/
+    │   ├── main/
+    │   │   ├── java/com/mirai/machineshop/
+    │   │   │   ├── controller/
+    │   │   │   ├── dto/
+    │   │   │   ├── entity/
+    │   │   │   ├── exception/
+    │   │   │   ├── repository/
+    │   │   │   ├── scheduler/
+    │   │   │   └── service/
+    │   │   │
+    │   │   └── resources/
+    │   │
+    │   └── test/
+    │
+    ├── pom.xml
+    ├── mvnw
+    ├── mvnw.cmd
+    ├── .gitignore
+    └── README.md
 
 ---
 
-# ♻️ Rework Handling
+# 🧪 Verification
 
-Quality failures should be represented as additional production work.
+## Backend Tests
 
-Example:
+The implemented feature set has been verified with:
 
-```text
-1000 pieces produced
-        ↓
-4% inspection failure
-        ↓
-40 pieces require rework
-        ↓
-Rework operation enters queue
-        ↓
-Machine capacity is consumed again
-```
+    41 tests
+    0 failures
+    0 errors
+    0 skipped
 
-The rework should affect:
+    BUILD SUCCESS
 
-* Machine capacity
-* Operator capacity
-* Delivery dates
-* Overtime requirements
-* Cost calculations
+The test suite covers:
 
----
-
-# 🏆 Schedule Strategy Comparison
-
-The final scheduling system should provide three planning strategies.
-
-## Cheapest Schedule
-
-Primary objective:
-
-```text
-Minimize production cost
-```
-
-Focus:
-
-* Overtime
-* Changeovers
-* Machine utilization
-* Penalties
+- Scheduling strategies
+- Cost calculations
+- Breakdown reporting
+- Dynamic replanning
+- Date windows
+- Operator availability
+- API validation
+- Duplicate-code validation
+- Strategy comparison
 
 ---
 
-## Most On-Time Schedule
+## Frontend Build
 
-Primary objective:
+The production frontend build was verified using:
 
-```text
-Maximize on-time delivery
-```
+    npm run build
 
-Focus:
-
-* Due dates
-* Customer tier
-* Late penalties
-* Critical orders
+Vite completed the production build successfully with no compilation errors.
 
 ---
 
-## Most Robust Schedule
+## Git Verification
 
-Primary objective:
+The project was also checked using:
 
-```text
-Remain resilient to disruptions
-```
+    git diff --check
 
-Focus:
+Formatting checks passed successfully.
 
-* Spare capacity
-* Alternative machines
-* Operator availability
-* Critical bottlenecks
-* Reduced dependency on single machines
+---
+
+# 📋 Assessment Requirement Mapping
+
+| Requirement | Status |
+|-------------|--------|
+| Realistic shop data | ✅ Implemented |
+| Machines | ✅ Implemented |
+| Machine capabilities | ✅ Implemented |
+| Operators and skills | ✅ Implemented |
+| Shift roster | ✅ Implemented |
+| Open production orders | ✅ Implemented |
+| Multi-step routings | ✅ Implemented |
+| Changeover matrix | ✅ Implemented |
+| Breakdown history | ✅ Implemented |
+| Machine breakdown reporting | ✅ Implemented |
+| Dynamic disruption replanning | ✅ Implemented |
+| Before vs After comparison | ✅ Implemented |
+| Overtime economics | ✅ Implemented |
+| Late-delivery penalties | ✅ Implemented |
+| Changeover cost | ✅ Implemented |
+| Most On-Time strategy | ✅ Implemented |
+| Cheapest Production strategy | ✅ Implemented |
+| Most Robust strategy | ✅ Implemented |
+| Strategy comparison | ✅ Implemented |
+| Dynamic strategy recommendation | ✅ Implemented |
+| Supervisor dashboard | ✅ Implemented |
+| Disruption workflow | ✅ Implemented |
+| Demo authentication | ✅ Implemented |
+| Protected frontend routes | ✅ Implemented |
+| Operator absence replanning | 🚧 Planned |
+| Material delay handling | 🚧 Planned |
+| Rework scheduling | 🚧 Planned |
+| Explicit two-week planning UI | 🟡 Future Enhancement |
+| Production-grade authentication | 🚧 Future |
+| Production deployment hardening | 🚧 Future |
+
+---
+
+# 🚧 Remaining Roadmap
+
+The core scheduling, disruption, cost-analysis and strategy-comparison workflow has been implemented.
+
+The following scenarios remain as future extensions:
+
+## 1. Operator Absence Replanning
+
+    Operator becomes unavailable
+            ↓
+    Find qualified replacement
+            ↓
+    Replan affected operations
+            ↓
+    Calculate delivery and cost impact
+
+## 2. Material Delay Handling
+
+    Material becomes unavailable
+            ↓
+    Identify dependent operations
+            ↓
+    Delay affected operations
+            ↓
+    Schedule other eligible work
+            ↓
+    Recalculate impact
+
+## 3. Rework Scheduling
+
+    Quality failure
+            ↓
+    Create rework operation
+            ↓
+    Allocate machine/operator
+            ↓
+    Update schedule
+            ↓
+    Recalculate delivery and cost impact
+
+## 4. Two-Week Planning View
+
+The scheduling engine supports future-date scheduling, but an explicit supervisor-facing rolling two-week planning interface can be added as a future UX enhancement.
+
+## 5. Production Hardening
+
+Future production-grade improvements include:
+
+- Backend authentication and authorization
+- Persistent schedule snapshots
+- Production deployment
+- Production configuration
+- Health checks
+- End-to-end testing
+- Security hardening
 
 ---
 
 # 👷 Supervisor Workflow
 
-The system is designed around a practical shop-floor workflow.
+The intended supervisor workflow is:
 
-```text
-06:00 AM
-   ↓
-Supervisor opens Dashboard
-   ↓
-Checks machine availability
-   ↓
-Checks operator availability
-   ↓
-Reviews today's production schedule
-   ↓
-Checks orders at risk
-   ↓
-Machine breakdown occurs
-   ↓
-Supervisor reports disruption
-   ↓
-Scheduler recalculates
-   ↓
-Supervisor reviews impact
-   ↓
-Supervisor executes revised plan
-```
-
-The interface should prioritize clear operational information rather than technical terminology.
-
----
-
-# 🧪 Example Disruption Scenario
-
-A representative future test scenario:
-
-> Tuesday, 11:00 AM — the grinding machine is unavailable for 8+ hours. One of the three qualified grinding operators is absent. A tier-1 customer has a just-in-time delivery scheduled for Thursday at 6:00 AM.
-
-The scheduler should determine:
-
-1. Which operations are affected?
-2. Which machines can perform the work?
-3. Which operators are available?
-4. Which orders become late?
-5. Can overtime prevent the delay?
-6. What is the overtime cost?
-7. What is the penalty exposure?
-8. What changeovers are required?
-9. Which schedule strategy is best?
-10. What action should the owner take immediately?
-
----
-
-# 🔐 Configuration & Security
-
-Database credentials should never be committed to source control.
-
-Local configuration:
-
-```text
-src/main/resources/application.properties
-```
-
-is intentionally excluded from Git.
-
-A safe example configuration is provided as:
-
-```text
-src/main/resources/application-example.properties
-```
-
-Configure the local database credentials before running the backend.
+    Login
+      ↓
+    Open Dashboard
+      ↓
+    Check Machines
+      ↓
+    Check Operators
+      ↓
+    Review Orders
+      ↓
+    Review Production Schedule
+      ↓
+    Select Scheduling Strategy
+      ↓
+    Machine Breakdown Occurs
+      ↓
+    Report Breakdown
+      ↓
+    Replan Schedule
+      ↓
+    Review Before vs After
+      ↓
+    Review Overtime / Penalty / Cost
+      ↓
+    Compare Strategies
+      ↓
+    Select Recommended Production Plan
 
 ---
 
@@ -834,21 +814,19 @@ Configure the local database credentials before running the backend.
 
 Install:
 
-* Java 17+
-* Maven or Maven Wrapper
-* MySQL
-* Node.js 18+
-* npm
-* Git
+- Java 17+
+- MySQL
+- Node.js 18+
+- npm
+- Git
 
 ---
 
 ## 1. Clone Repository
 
-```bash
-git clone https://github.com/pranavk08/machine-shop-scheduler.git
-cd machine-shop-scheduler
-```
+    git clone https://github.com/pranavk08/machine-shop-scheduler.git
+
+    cd machine-shop-scheduler
 
 ---
 
@@ -856,219 +834,131 @@ cd machine-shop-scheduler
 
 Create the database:
 
-```sql
-CREATE DATABASE machine_shop_scheduler;
-```
+    CREATE DATABASE machine_shop_scheduler;
 
-Configure your local Spring Boot database credentials in:
+Configure local credentials in:
 
-```text
-src/main/resources/application.properties
-```
+    src/main/resources/application.properties
 
 Example:
 
-```properties
-spring.application.name=machine-shop-scheduler
+    spring.application.name=machine-shop-scheduler
 
-spring.datasource.url=jdbc:mysql://localhost:3306/machine_shop_scheduler
-spring.datasource.username=root
-spring.datasource.password=YOUR_DB_PASSWORD
+    spring.datasource.url=jdbc:mysql://localhost:3306/machine_shop_scheduler
+    spring.datasource.username=root
+    spring.datasource.password=YOUR_DB_PASSWORD
 
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
-spring.jpa.properties.hibernate.format_sql=true
+    spring.jpa.hibernate.ddl-auto=update
+    spring.jpa.show-sql=true
+    spring.jpa.properties.hibernate.format_sql=true
 
-server.port=8080
-```
+    server.port=8080
+
+Do not commit real database credentials to GitHub.
 
 ---
 
-# ▶️ Start Backend
+## 3. Start Backend
+
+### Windows PowerShell
 
 From the project root:
 
-### Windows
+    .\mvnw.cmd spring-boot:run
 
-```powershell
-.\mvnw.cmd spring-boot:run
-```
+Backend runs at:
 
-Or run:
+    http://localhost:8080
 
-```text
-MachineShopSchedulerApplication
-```
+Alternatively, the backend can be started from Eclipse / Spring Tool Suite by running:
 
-from Eclipse / Spring Tool Suite.
-
-Backend:
-
-```text
-http://localhost:8080
-```
+    MachineShopSchedulerApplication
 
 ---
 
-# ▶️ Start Frontend
+## 4. Start Frontend
 
 Open another terminal:
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+    cd frontend
 
-The Vite development server will provide the frontend URL shown in the terminal, typically:
+    npm install
 
-```text
-http://localhost:5173
-```
+    npm run dev
+
+Vite will provide a local URL similar to:
+
+    http://localhost:5173
 
 ---
 
-# 🔗 Application Flow
+# 🔐 Security Notes
 
-```text
-Browser
-   │
-   ▼
-React Frontend
-   │
-   │ REST API
-   ▼
-Spring Boot
-   │
-   ├── Controllers
-   ├── Services
-   ├── Scheduler
-   └── Repositories
-          │
-          ▼
-        MySQL
-```
+Database credentials should remain in:
 
----
+    src/main/resources/application.properties
 
-# 🧩 Assessment Requirement Mapping
+The example configuration is provided through:
 
-| Mirai Labs Requirement        | Implementation                                                          |
-| ----------------------------- | ----------------------------------------------------------------------- |
-| Generate realistic shop data  | ✅ Core domain/data initialization                                       |
-| Machines                      | ✅                                                                       |
-| Machine capabilities          | ✅                                                                       |
-| Operators and skills          | ✅                                                                       |
-| Shift roster                  | ✅                                                                       |
-| ~25 open orders               | ✅                                                                       |
-| Multi-step routings           | ✅                                                                       |
-| Changeover matrix             | ✅ Model implemented                                                     |
-| Breakdown history             | ✅                                                                       |
-| 2-week production scheduling  | 🟡 Core scheduling implemented; presentation/validation can be improved |
-| Machine disruption replanning | 🚧 Next major implementation                                            |
-| Operator absence replanning   | 🚧 Planned                                                              |
-| Material delay replanning     | 🚧 Planned                                                              |
-| Rework scheduling             | 🚧 Planned                                                              |
-| Overtime economics            | 🚧 Planned                                                              |
-| Late-delivery penalties       | 🚧 Planned                                                              |
-| Wasted changeover cost        | 🚧 Planned                                                              |
-| Cheapest schedule             | 🚧 Planned                                                              |
-| Most on-time schedule         | 🚧 Planned                                                              |
-| Most robust schedule          | 🚧 Planned                                                              |
-| Supervisor dashboard          | ✅ Core UI                                                               |
-| Disruption workflow           | 🟡 UI exists; advanced workflow to be completed                         |
-| Trade-off memo                | 🚧 To be documented after strategy implementation                       |
-| Live disruption defense       | 🚧 Final preparation                                                    |
+    src/main/resources/application-example.properties
+
+The frontend demo login is intentionally designed for demonstration purposes.
+
+It is not a production security mechanism.
+
+A production deployment should use proper authentication and authorization such as:
+
+- Backend authentication
+- Password hashing
+- Session/JWT management
+- Role-based access control
+- Secure secrets management
 
 ---
 
-# 📈 Development Roadmap
+# 📈 Current Project Status
 
-### Phase 1 — Core Platform
+Core full-stack platform: ✅ COMPLETE
 
-* [x] Spring Boot backend
-* [x] React frontend
-* [x] MySQL database
-* [x] Production domain model
-* [x] CRUD APIs
-* [x] Basic scheduling
-* [x] Dashboard
-* [x] Production schedule
-* [x] Machines
-* [x] Operators
-* [x] Orders
-* [x] Disruptions UI
+Scheduling engine: ✅ COMPLETE
 
-### Phase 2 — Scheduling Intelligence
+Machine/operator constraints: ✅ COMPLETE
 
-* [ ] Automatic disruption replanning
-* [ ] Operator absence handling
-* [ ] Material delay handling
-* [ ] Rework handling
-* [ ] Alternative machine selection
-* [ ] Changeover-aware sequencing
-* [ ] Schedule impact comparison
+Machine breakdown reporting: ✅ COMPLETE
 
-### Phase 3 — Cost Optimization
+Dynamic disruption replanning: ✅ COMPLETE
 
-* [ ] Overtime calculation
-* [ ] Late penalty calculation
-* [ ] Changeover cost calculation
-* [ ] Total disruption cost
-* [ ] Cheapest schedule
-* [ ] Most on-time schedule
-* [ ] Most robust schedule
-* [ ] Strategy comparison
+Before vs After impact analysis: ✅ COMPLETE
 
-### Phase 4 — Production-Ready UX
+Overtime analysis: ✅ COMPLETE
 
-* [ ] Supervisor-oriented schedule board
-* [ ] Machine status visualization
-* [ ] Orders-at-risk indicators
-* [ ] Cost/impact dashboard
-* [ ] Improved disruption workflow
+Late-delivery penalty analysis: ✅ COMPLETE
 
-### Phase 5 — Deployment
+Disruption cost analysis: ✅ COMPLETE
 
-* [ ] Production database
-* [ ] Environment-based configuration
-* [ ] Backend deployment
-* [ ] Frontend deployment
-* [ ] CORS production configuration
-* [ ] Production health checks
-* [ ] End-to-end testing
+Three scheduling strategies: ✅ COMPLETE
 
----
+Strategy comparison: ✅ COMPLETE
 
-# 🎓 Technical Assessment Focus
+Dynamic strategy recommendation: ✅ COMPLETE
 
-The most important part of this project is not simply displaying production data.
+Demo authentication: ✅ COMPLETE
 
-The core objective is to demonstrate how software can help a manufacturing supervisor answer:
+Protected frontend routes: ✅ COMPLETE
 
-> **"What should we run, on which machine, with which operator, and what should we do when reality changes?"**
+Remaining assessment scenarios:
 
-The next stage of the project therefore focuses on **dynamic scheduling, disruption recovery, cost trade-offs, and operational decision support**.
+- Operator absence
+- Material delay
+- Rework
 
----
-
-# 📌 Current Project Status
-
-**Core full-stack platform:** Implemented
-
-**Scheduling foundation:** Implemented
-
-**Supervisor UI:** Implemented
-
-**Advanced optimization and disruption economics:** In progress
-
-The current version is suitable for demonstrating the application's architecture, domain modeling, API integration, scheduling foundation and frontend workflow. The remaining optimization features are the primary focus for completing the full technical-assessment scope.
+These are planned future extensions and are not currently claimed as implemented.
 
 ---
 
 # 👨‍💻 Author
 
-**Pranav Kamble**
+Pranav Kamble
 
 Aspiring Software Developer | Full-Stack Developer
 
@@ -1080,4 +970,4 @@ https://github.com/pranavk08
 
 # 📄 License
 
-This project was developed as part of a technical assessment and portfolio demonstration.
+This project is developed for technical assessment and demonstration purposes.
