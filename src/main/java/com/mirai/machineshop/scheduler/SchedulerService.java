@@ -47,6 +47,27 @@ public class SchedulerService {
     private final OperatorShiftRepository operatorShiftRepository;
     private final ChangeoverRepository changeoverRepository;
     private final BreakdownRepository breakdownRepository;
+    private final com.mirai.machineshop.service.CostCalculationService costCalculationService;
+
+    public SchedulerService(
+            MachineCapabilityRepository machineCapabilityRepository,
+            OperationRepository operationRepository,
+            OrderRepository orderRepository,
+            OperatorSkillRepository operatorSkillRepository,
+            OperatorShiftRepository operatorShiftRepository,
+            ChangeoverRepository changeoverRepository,
+            BreakdownRepository breakdownRepository,
+            com.mirai.machineshop.service.CostCalculationService costCalculationService) {
+
+        this.machineCapabilityRepository = machineCapabilityRepository;
+        this.operationRepository = operationRepository;
+        this.orderRepository = orderRepository;
+        this.operatorSkillRepository = operatorSkillRepository;
+        this.operatorShiftRepository = operatorShiftRepository;
+        this.changeoverRepository = changeoverRepository;
+        this.breakdownRepository = breakdownRepository;
+        this.costCalculationService = costCalculationService;
+    }
 
     public SchedulerService(
             MachineCapabilityRepository machineCapabilityRepository,
@@ -57,13 +78,11 @@ public class SchedulerService {
             ChangeoverRepository changeoverRepository,
             BreakdownRepository breakdownRepository) {
 
-        this.machineCapabilityRepository = machineCapabilityRepository;
-        this.operationRepository = operationRepository;
-        this.orderRepository = orderRepository;
-        this.operatorSkillRepository = operatorSkillRepository;
-        this.operatorShiftRepository = operatorShiftRepository;
-        this.changeoverRepository = changeoverRepository;
-        this.breakdownRepository = breakdownRepository;
+        this(machineCapabilityRepository, operationRepository, orderRepository,
+                operatorSkillRepository, operatorShiftRepository, changeoverRepository,
+                breakdownRepository,
+                new com.mirai.machineshop.service.CostCalculationService(
+                        changeoverRepository, 480, 500.0, 150.0, 75.0, 300.0));
     }
 
     private boolean isShiftCoveringOperation(
@@ -983,6 +1002,18 @@ public class SchedulerService {
             }
         }
 
+        com.mirai.machineshop.dto.CostImpactSummary beforeCostSummary = costCalculationService != null
+                ? costCalculationService.calculateCostSummary(beforeSchedule, openOrders)
+                : null;
+
+        com.mirai.machineshop.dto.CostImpactSummary afterCostSummary = costCalculationService != null
+                ? costCalculationService.calculateCostSummary(afterSchedule, openOrders)
+                : null;
+
+        double netCostImpact = (beforeCostSummary != null && afterCostSummary != null)
+                ? Math.round((afterCostSummary.totalCost() - beforeCostSummary.totalCost()) * 100.0) / 100.0
+                : 0.0;
+
         return new ReplanResultResponse(
                 effectiveReplanTime,
                 afterSchedule.size(),
@@ -992,7 +1023,10 @@ public class SchedulerService {
                 operatorsReassignedCount,
                 beforeSchedule,
                 afterSchedule,
-                impactDeltas);
+                impactDeltas,
+                beforeCostSummary,
+                afterCostSummary,
+                netCostImpact);
     }
 
     private static class SchedulingState {

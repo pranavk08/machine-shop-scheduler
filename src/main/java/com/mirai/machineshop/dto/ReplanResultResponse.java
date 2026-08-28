@@ -14,5 +14,23 @@ public record ReplanResultResponse(
         int operatorsReassignedCount,
         List<ScheduleResult> beforeSchedule,
         List<ScheduleResult> afterSchedule,
-        List<OperationScheduleDelta> impactDeltas) {
+        List<OperationScheduleDelta> impactDeltas,
+        CostImpactSummary beforeCostSummary,
+        CostImpactSummary afterCostSummary,
+        double netCostImpact) {
+
+    public ReplanResultResponse(
+            LocalDateTime replanTimestamp,
+            int totalOperations,
+            int operationsMovedCount,
+            int ordersDelayedCount,
+            int machinesReassignedCount,
+            int operatorsReassignedCount,
+            List<ScheduleResult> beforeSchedule,
+            List<ScheduleResult> afterSchedule,
+            List<OperationScheduleDelta> impactDeltas) {
+        this(replanTimestamp, totalOperations, operationsMovedCount, ordersDelayedCount,
+                machinesReassignedCount, operatorsReassignedCount, beforeSchedule, afterSchedule,
+                impactDeltas, null, null, 0.0);
+    }
 }
