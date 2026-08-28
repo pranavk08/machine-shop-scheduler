@@ -4,53 +4,93 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.stereotype.Service;
-
-import java.util.HashMap;
-import java.util.Map;
 
 import com.mirai.machineshop.entity.Breakdown;
 import com.mirai.machineshop.entity.Changeover;
 import com.mirai.machineshop.entity.Machine;
-import com.mirai.machineshop.entity.Order;
 import com.mirai.machineshop.entity.MachineCapability;
 import com.mirai.machineshop.entity.Operation;
 import com.mirai.machineshop.entity.Operator;
 import com.mirai.machineshop.entity.OperatorShift;
 import com.mirai.machineshop.entity.OperatorSkill;
+import com.mirai.machineshop.entity.Order;
+import com.mirai.machineshop.exception.ResourceNotFoundException;
+import com.mirai.machineshop.exception.SchedulingUnavailableException;
+import com.mirai.machineshop.repository.BreakdownRepository;
+import com.mirai.machineshop.repository.ChangeoverRepository;
 import com.mirai.machineshop.repository.MachineCapabilityRepository;
 import com.mirai.machineshop.repository.OperationRepository;
 import com.mirai.machineshop.repository.OperatorShiftRepository;
 import com.mirai.machineshop.repository.OperatorSkillRepository;
 import com.mirai.machineshop.repository.OrderRepository;
-import com.mirai.machineshop.repository.BreakdownRepository;
-import com.mirai.machineshop.repository.ChangeoverRepository;
-
-
-
-
-
 
 @Service
 public class SchedulerService {
-	
-	private final OperatorSkillRepository operatorSkillRepository;
-	
-	private final ChangeoverRepository changeoverRepository;
-	
-	private final BreakdownRepository breakdownRepository;
-	
-	private final OrderRepository orderRepository;
-	
-	private final OperatorShiftRepository operatorShiftRepository;
-	
+
+    private static final int SEARCH_HORIZON_DAYS = 30;
+    private static final int TIME_SLOT_MINUTES = 30;
+    private static final int MAX_SEARCH_ATTEMPTS =
+            (SEARCH_HORIZON_DAYS * 24 * 60) / TIME_SLOT_MINUTES;
 
     private final MachineCapabilityRepository machineCapabilityRepository;
-    
     private final OperationRepository operationRepository;
-    
+    private final OrderRepository orderRepository;
+    private final OperatorSkillRepository operatorSkillRepository;
+    private final OperatorShiftRepository operatorShiftRepository;
+    private final ChangeoverRepository changeoverRepository;
+    private final BreakdownRepository breakdownRepository;
+
+    public SchedulerService(
+            MachineCapabilityRepository machineCapabilityRepository,
+            OperationRepository operationRepository,
+            OrderRepository orderRepository,
+            OperatorSkillRepository operatorSkillRepository,
+            OperatorShiftRepository operatorShiftRepository,
+            ChangeoverRepository changeoverRepository,
+            BreakdownRepository breakdownRepository) {
+
+        this.machineCapabilityRepository = machineCapabilityRepository;
+        this.operationRepository = operationRepository;
+        this.orderRepository = orderRepository;
+        this.operatorSkillRepository = operatorSkillRepository;
+        this.operatorShiftRepository = operatorShiftRepository;
+        this.changeoverRepository = changeoverRepository;
+        this.breakdownRepository = breakdownRepository;
+    }
+
+    private boolean isShiftCoveringOperation(
+            OperatorShift operatorShift,
+            LocalDateTime startTime,
+            LocalDateTime endTime) {
+
+        if (operatorShift == null || operatorShift.getShift() == null) {
+            return false;
+        }
+
+        LocalTime shiftStart = operatorShift.getShift().getStartTime();
+        LocalTime shiftEnd = operatorShift.getShift().getEndTime();
+
+        LocalDateTime shiftStartDateTime =
+                LocalDateTime.of(operatorShift.getWorkDate(), shiftStart);
+
+        LocalDateTime shiftEndDateTime;
+        if (!shiftEnd.isAfter(shiftStart)) {
+            shiftEndDateTime =
+                    LocalDateTime.of(operatorShift.getWorkDate().plusDays(1), shiftEnd);
+        } else {
+            shiftEndDateTime =
+                    LocalDateTime.of(operatorShift.getWorkDate(), shiftEnd);
+        }
+
+        return !startTime.isBefore(shiftStartDateTime)
+                && !endTime.isAfter(shiftEndDateTime);
+    }
+
     private boolean isMachineFree(
             SchedulingState schedulingState,
             Machine machine,
@@ -77,7 +117,7 @@ public class SchedulerService {
         return noBookingConflict
                 && noBreakdownConflict;
     }
-    
+
     private boolean isMachineAvailableDuringBreakdown(
             Machine machine,
             LocalDateTime startTime,
@@ -94,7 +134,7 @@ public class SchedulerService {
                         && endTime.isAfter(
                                 breakdown.getStartTime()));
     }
-    
+
     private boolean isOperatorFree(
             SchedulingState schedulingState,
             Operator operator,
@@ -110,39 +150,7 @@ public class SchedulerService {
                                 && endTime.isAfter(
                                         booking.getStartTime()));
     }
-    
-    public SchedulerService(
-            MachineCapabilityRepository machineCapabilityRepository,
-            OperationRepository operationRepository,
-            OrderRepository orderRepository,
-            OperatorSkillRepository operatorSkillRepository,
-            OperatorShiftRepository operatorShiftRepository,
-            ChangeoverRepository changeoverRepository,
-            BreakdownRepository breakdownRepository) {
 
-        this.machineCapabilityRepository =
-                machineCapabilityRepository;
-
-        this.operationRepository =
-                operationRepository;
-        
-        this.orderRepository = orderRepository;
-
-        this.operatorSkillRepository =
-                operatorSkillRepository;
-
-        this.operatorShiftRepository =
-                operatorShiftRepository;
-
-        this.changeoverRepository =
-                changeoverRepository;
-        
-        this.breakdownRepository = breakdownRepository;
-    }
-    
-    
-    
-    
     private MachineAvailability findMachineAvailableAt(
             SchedulingState schedulingState,
             String requiredMachineType,
@@ -154,9 +162,7 @@ public class SchedulerService {
                 findCapableMachines(requiredMachineType);
 
         Machine bestMachine = null;
-
         LocalDateTime earliestStartTime = null;
-
         LocalDateTime earliestOperationStartTime = null;
 
         for (Machine machine : machines) {
@@ -165,8 +171,7 @@ public class SchedulerService {
                 continue;
             }
 
-            LocalDateTime candidateStartTime =
-                    requestedStartTime;
+            LocalDateTime candidateStartTime = requestedStartTime;
 
             String previousPartFamily =
                     getPreviousPartFamily(
@@ -181,7 +186,7 @@ public class SchedulerService {
                             previousPartFamily,
                             partFamily);
 
-            for (int attempt = 0; attempt < 96; attempt++) {
+            for (int attempt = 0; attempt < MAX_SEARCH_ATTEMPTS; attempt++) {
 
                 LocalDateTime operationStartTime =
                         candidateStartTime.plusMinutes(
@@ -190,8 +195,6 @@ public class SchedulerService {
                 LocalDateTime candidateEndTime =
                         operationStartTime.plusMinutes(
                                 processingMinutes);
-                
-                
 
                 if (isMachineFree(
                         schedulingState,
@@ -204,12 +207,8 @@ public class SchedulerService {
                                     earliestStartTime)) {
 
                         bestMachine = machine;
-
-                        earliestStartTime =
-                                candidateStartTime;
-
-                        earliestOperationStartTime =
-                                operationStartTime;
+                        earliestStartTime = candidateStartTime;
+                        earliestOperationStartTime = operationStartTime;
                     }
 
                     break;
@@ -254,9 +253,7 @@ public class SchedulerService {
                 earliestStartTime,
                 earliestOperationStartTime);
     }
-    
-    
-    
+
     private LocalDateTime getNextMachineFreeTime(
             SchedulingState schedulingState,
             Machine machine,
@@ -273,7 +270,7 @@ public class SchedulerService {
                 .min(LocalDateTime::compareTo)
                 .orElse(currentTime);
     }
-    
+
     private String getPreviousPartFamily(
             SchedulingState schedulingState,
             Machine machine,
@@ -292,11 +289,7 @@ public class SchedulerService {
                 .map(MachineBooking::getPartFamily)
                 .orElse(null);
     }
-    
-   
 
-    
-    
     public List<Machine> findCapableMachines(
             String requiredMachineType) {
 
@@ -320,8 +313,7 @@ public class SchedulerService {
                 .findFirst()
                 .orElse(null);
     }
-    
-    
+
     public List<Operator> findAvailableOperators(
             String requiredSkill,
             LocalDate date,
@@ -354,30 +346,34 @@ public class SchedulerService {
                 continue;
             }
 
-            List<OperatorShift> shifts =
+            LocalDate queryDate = (date != null) ? date : startTime.toLocalDate();
+
+            List<OperatorShift> currentDayShifts =
                     operatorShiftRepository
                             .findByOperatorIdAndWorkDateAndAvailableTrue(
                                     operator.getId(),
-                                    date);
+                                    queryDate);
 
-            boolean worksDuringOperation = shifts.stream()
-                    .anyMatch(operatorShift -> {
+            List<OperatorShift> previousDayShifts =
+                    operatorShiftRepository
+                            .findByOperatorIdAndWorkDateAndAvailableTrue(
+                                    operator.getId(),
+                                    queryDate.minusDays(1));
 
-                        LocalTime shiftStart =
-                                operatorShift.getShift().getStartTime();
+            List<OperatorShift> allCandidateShifts = new ArrayList<>();
+            if (currentDayShifts != null) {
+                allCandidateShifts.addAll(currentDayShifts);
+            }
+            if (previousDayShifts != null) {
+                allCandidateShifts.addAll(previousDayShifts);
+            }
 
-                        LocalTime shiftEnd =
-                                operatorShift.getShift().getEndTime();
-
-                        LocalTime operationStart =
-                                startTime.toLocalTime();
-
-                        LocalTime operationEnd =
-                                endTime.toLocalTime();
-
-                        return !operationStart.isBefore(shiftStart)
-                                && !operationEnd.isAfter(shiftEnd);
-                    });
+            boolean worksDuringOperation = allCandidateShifts.stream()
+                    .anyMatch(operatorShift ->
+                            isShiftCoveringOperation(
+                                    operatorShift,
+                                    startTime,
+                                    endTime));
 
             if (worksDuringOperation
                     && isOperatorFree(
@@ -392,11 +388,7 @@ public class SchedulerService {
 
         return availableOperators;
     }
-    
-    
-    
-    
-    
+
     public List<Operator> findQualifiedOperators(
             String requiredSkill) {
 
@@ -408,15 +400,13 @@ public class SchedulerService {
                 .map(OperatorSkill::getOperator)
                 .toList();
     }
-    
-    
 
     public Machine findMachineForOperation(Long operationId) {
 
         Operation operation = operationRepository
                 .findById(operationId)
                 .orElseThrow(() ->
-                        new RuntimeException(
+                        new ResourceNotFoundException(
                                 "Operation not found: " + operationId));
 
         String requiredType =
@@ -424,22 +414,20 @@ public class SchedulerService {
 
         return findAvailableMachine(requiredType);
     }
-    
-    
-    
+
     public ScheduleResult scheduleOperation(Long operationId) {
 
         Operation operation = operationRepository
                 .findById(operationId)
                 .orElseThrow(() ->
-                        new RuntimeException(
+                        new ResourceNotFoundException(
                                 "Operation not found: " + operationId));
 
         Machine machine = findAvailableMachine(
                 operation.getRequiredMachineType());
 
         if (machine == null) {
-            throw new RuntimeException(
+            throw new SchedulingUnavailableException(
                     "No available machine found for: "
                             + operation.getRequiredMachineType());
         }
@@ -457,7 +445,7 @@ public class SchedulerService {
                         endTime);
 
         if (availableOperators.isEmpty()) {
-            throw new RuntimeException(
+            throw new SchedulingUnavailableException(
                     "No qualified operator available for operation: "
                             + operation.getOperationType());
         }
@@ -471,10 +459,8 @@ public class SchedulerService {
                 startTime,
                 endTime
         );
-    
-        	
     }
-    
+
     private LocalDateTime findEarliestOperatorStartTime(
             SchedulingState schedulingState,
             String requiredSkill,
@@ -483,7 +469,7 @@ public class SchedulerService {
 
         LocalDateTime candidateStartTime = requestedStartTime;
 
-        for (int i = 0; i < 48; i++) {
+        for (int i = 0; i < MAX_SEARCH_ATTEMPTS; i++) {
 
             LocalDateTime candidateEndTime =
                     candidateStartTime.plusMinutes(processingMinutes);
@@ -506,26 +492,26 @@ public class SchedulerService {
 
         return null;
     }
-    
+
     private MachineAvailability findMachineAndOperatorAvailability(
-                SchedulingState schedulingState,
-    		    String machineType,
-    	        String operatorSkill,
-    	        String partFamily,
-    	        LocalDateTime requestedStartTime,
-    	        int processingMinutes)  {
+            SchedulingState schedulingState,
+            String machineType,
+            String operatorSkill,
+            String partFamily,
+            LocalDateTime requestedStartTime,
+            int processingMinutes) {
 
         LocalDateTime candidateStartTime = requestedStartTime;
 
-        for (int i = 0; i < 96; i++) {
+        for (int i = 0; i < MAX_SEARCH_ATTEMPTS; i++) {
 
-        	MachineAvailability machineAvailability =
-        	        findMachineAvailableAt(
-                        schedulingState,
-        	                machineType,
-        	                partFamily,
-        	                candidateStartTime,
-        	                processingMinutes);
+            MachineAvailability machineAvailability =
+                    findMachineAvailableAt(
+                            schedulingState,
+                            machineType,
+                            partFamily,
+                            candidateStartTime,
+                            processingMinutes);
 
             if (machineAvailability == null) {
                 return null;
@@ -548,7 +534,7 @@ public class SchedulerService {
                             operationStartTime.toLocalDate(),
                             operationStartTime,
                             operationEndTime);
-            
+
             if (!operators.isEmpty()) {
 
                 Operator operator = operators.get(0);
@@ -565,8 +551,7 @@ public class SchedulerService {
 
         return null;
     }
-    
-    
+
     private int getChangeoverMinutes(
             SchedulingState schedulingState,
             Machine machine,
@@ -600,10 +585,7 @@ public class SchedulerService {
 
         return minutes;
     }
-    
-    
-    
-    
+
     public List<ScheduleResult> scheduleOrder(
             Long orderId,
             LocalDateTime schedulingStartTime) {
@@ -617,7 +599,11 @@ public class SchedulerService {
     private List<ScheduleResult> scheduleOrder(
             Long orderId,
             LocalDateTime schedulingStartTime,
-            SchedulingState schedulingState) { {
+            SchedulingState schedulingState) {
+
+        if (!orderRepository.existsById(orderId)) {
+            throw new ResourceNotFoundException("Order not found: " + orderId);
+        }
 
         List<Operation> operations = operationRepository
                 .findAll()
@@ -631,15 +617,12 @@ public class SchedulerService {
                 .toList();
 
         if (operations.isEmpty()) {
-            throw new RuntimeException(
+            throw new SchedulingUnavailableException(
                     "No operations found for order: " + orderId);
         }
 
         List<ScheduleResult> schedule = new ArrayList<>();
-
         LocalDateTime nextAvailableTime = schedulingStartTime;
-        
-        
 
         for (Operation operation : operations) {
 
@@ -653,28 +636,20 @@ public class SchedulerService {
                             operation.getProcessingTimeMinutes());
 
             if (availability == null) {
-                throw new RuntimeException(
+                throw new SchedulingUnavailableException(
                         "No machine and operator available for operation: "
                                 + operation.getOperationType());
             }
 
             Machine machine = availability.getMachine();
-
-            LocalDateTime machineStartTime =
-                    availability.getStartTime();
-
-            LocalDateTime startTime =
-                    availability.getOperationStartTime();
-
-            LocalDateTime endTime =
-                    startTime.plusMinutes(
-                            operation.getProcessingTimeMinutes());
-
-            Operator operator =
-                    availability.getOperator();
+            LocalDateTime machineStartTime = availability.getStartTime();
+            LocalDateTime startTime = availability.getOperationStartTime();
+            LocalDateTime endTime = startTime.plusMinutes(
+                    operation.getProcessingTimeMinutes());
+            Operator operator = availability.getOperator();
 
             if (operator == null) {
-                throw new RuntimeException(
+                throw new SchedulingUnavailableException(
                         "No qualified operator available for operation: "
                                 + operation.getOperationType());
             }
@@ -711,42 +686,41 @@ public class SchedulerService {
 
         return schedule;
     }
-            }
-    
-            public List<ScheduleResult> scheduleAllOpenOrders() {
 
-                SchedulingState schedulingState =
-                        new SchedulingState();
+    public List<ScheduleResult> scheduleAllOpenOrders() {
 
-                LocalDateTime schedulingStartTime = LocalDateTime.now();
+        SchedulingState schedulingState =
+                new SchedulingState();
 
-                List<Order> openOrders =
-                        orderRepository.findByStatusIgnoreCase("OPEN");
+        LocalDateTime schedulingStartTime = LocalDateTime.now();
 
-                if (openOrders.isEmpty()) {
-                    throw new RuntimeException(
-                            "No open orders found.");
-                }
+        List<Order> openOrders =
+                orderRepository.findByStatusIgnoreCase("OPEN");
 
-                List<ScheduleResult> completeSchedule =
-                        new ArrayList<>();
+        if (openOrders.isEmpty()) {
+            throw new SchedulingUnavailableException(
+                    "No open orders found.");
+        }
 
-                openOrders.sort((a, b) ->
-                        a.getDueDate().compareTo(b.getDueDate()));
+        List<ScheduleResult> completeSchedule =
+                new ArrayList<>();
 
-                for (Order order : openOrders) {
+        openOrders.sort((a, b) ->
+                a.getDueDate().compareTo(b.getDueDate()));
 
-                    List<ScheduleResult> orderSchedule =
-                            scheduleOrder(
-                                    order.getId(),
-                                    schedulingStartTime,
-                                    schedulingState);
+        for (Order order : openOrders) {
 
-                    completeSchedule.addAll(orderSchedule);
-                }
+            List<ScheduleResult> orderSchedule =
+                    scheduleOrder(
+                            order.getId(),
+                            schedulingStartTime,
+                            schedulingState);
 
-                return completeSchedule;
-            }
+            completeSchedule.addAll(orderSchedule);
+        }
+
+        return completeSchedule;
+    }
 
     private static class SchedulingState {
 

@@ -2,6 +2,7 @@ package com.mirai.machineshop.controller;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -9,14 +10,20 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.validation.annotation.Validated;
 
 import com.mirai.machineshop.entity.Machine;
 import com.mirai.machineshop.entity.Operator;
 import com.mirai.machineshop.scheduler.ScheduleResult;
 import com.mirai.machineshop.scheduler.SchedulerService;
+import com.mirai.machineshop.exception.InvalidBusinessRequestException;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 
 @RestController
 @RequestMapping("/api/scheduler")
+@Validated
 public class SchedulerController {
 
     private final SchedulerService schedulerService;
@@ -27,21 +34,21 @@ public class SchedulerController {
 
     @GetMapping("/machines/{type}")
     public List<Machine> findMachines(
-            @PathVariable String type) {
+            @NotBlank @PathVariable String type) {
 
         return schedulerService.findCapableMachines(type);
     }
 
     @GetMapping("/available-machine/{type}")
     public Machine findAvailableMachine(
-            @PathVariable String type) {
+            @NotBlank @PathVariable String type) {
 
         return schedulerService.findAvailableMachine(type);
     }
     
     @GetMapping("/operation/{operationId}/machine")
     public Machine findMachineForOperation(
-            @PathVariable Long operationId) {
+            @Positive @PathVariable Long operationId) {
 
         return schedulerService
                 .findMachineForOperation(operationId);
@@ -49,14 +56,14 @@ public class SchedulerController {
     
     @GetMapping("/operation/{operationId}/schedule")
     public ScheduleResult scheduleOperation(
-            @PathVariable Long operationId) {
+            @Positive @PathVariable Long operationId) {
 
         return schedulerService.scheduleOperation(operationId);
     }
     
     @GetMapping("/order/{orderId}/schedule")
     public List<ScheduleResult> scheduleOrder(
-            @PathVariable Long orderId) {
+            @Positive @PathVariable Long orderId) {
 
     	return schedulerService.scheduleOrder(
     	        orderId,
@@ -72,23 +79,46 @@ public class SchedulerController {
     
     @GetMapping("/operators/skill/{skill}")
     public List<Operator> findQualifiedOperators(
-            @PathVariable String skill) {
+            @NotBlank @PathVariable String skill) {
 
         return schedulerService.findQualifiedOperators(skill);
     }
     
     @GetMapping("/operators/available")
     public List<Operator> findAvailableOperators(
-            @RequestParam String skill,
+            @NotBlank @RequestParam String skill,
             @RequestParam String date,
             @RequestParam String start,
             @RequestParam String end) {
 
+        LocalDate parsedDate;
+        LocalDateTime parsedStart;
+        LocalDateTime parsedEnd;
+
+        try {
+            parsedDate = LocalDate.parse(date);
+            parsedStart = LocalDateTime.parse(start);
+            parsedEnd = LocalDateTime.parse(end);
+        } catch (DateTimeParseException exception) {
+            throw new InvalidBusinessRequestException(
+                    "date, start, and end must use ISO-8601 format.");
+        }
+
+        if (!parsedEnd.isAfter(parsedStart)) {
+            throw new InvalidBusinessRequestException(
+                    "end must be after start.");
+        }
+
+        if (!parsedStart.toLocalDate().equals(parsedDate)) {
+            throw new InvalidBusinessRequestException(
+                    "date must match the start date.");
+        }
+
         return schedulerService.findAvailableOperators(
                 skill,
-                LocalDate.parse(date),
-                LocalDateTime.parse(start),
-                LocalDateTime.parse(end)
+                parsedDate,
+                parsedStart,
+                parsedEnd
         );
     }
     

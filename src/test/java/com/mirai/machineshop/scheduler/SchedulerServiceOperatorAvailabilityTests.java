@@ -133,6 +133,7 @@ class SchedulerServiceOperatorAvailabilityTests {
             when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
                     .thenReturn(List.of(new MachineCapability(machine, "TURNING")));
             when(operationRepository.findAll()).thenReturn(List.of(operation));
+            when(orderRepository.existsById(1L)).thenReturn(true);
             when(breakdownRepository.findByMachineId(machine.getId()))
                     .thenReturn(List.of());
         }

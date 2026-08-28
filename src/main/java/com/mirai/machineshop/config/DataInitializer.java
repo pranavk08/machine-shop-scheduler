@@ -433,9 +433,9 @@ public class DataInitializer implements CommandLineRunner {
         Shift shift1 = findShift("SHIFT-1");
         Shift shift2 = findShift("SHIFT-2");
 
-        LocalDate startDate = LocalDate.of(2026, 8, 26);
+        LocalDate startDate = LocalDate.now();
 
-        for (int day = 0; day < 14; day++) {
+        for (int day = 0; day < 30; day++) {
 
             LocalDate date = startDate.plusDays(day);
 
@@ -458,7 +458,7 @@ public class DataInitializer implements CommandLineRunner {
             }
         }
 
-        System.out.println("Created 14-day operator shift roster.");
+        System.out.println("Created 30-day operator shift roster.");
     }
     
     
@@ -473,8 +473,8 @@ public class DataInitializer implements CommandLineRunner {
         entityManager.persist(
                 new Breakdown(
                         machine,
-                        LocalDateTime.of(2026, 8, 28, 10, 0),
-                        LocalDateTime.of(2026, 8, 28, 18, 0),
+                        LocalDateTime.of(LocalDate.now(), LocalTime.of(10, 0)),
+                        LocalDateTime.of(LocalDate.now(), LocalTime.of(18, 0)),
                         "Bearing failure"
                 )
         );
