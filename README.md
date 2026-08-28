@@ -1026,9 +1026,7 @@ Spring Boot
 * [ ] Machine status visualization
 * [ ] Orders-at-risk indicators
 * [ ] Cost/impact dashboard
-* [ ] Gantt-style schedule visualization
 * [ ] Improved disruption workflow
-* [ ] Clear production KPIs
 
 ### Phase 5 — Deployment
 
@@ -1072,7 +1070,7 @@ The current version is suitable for demonstrating the application's architecture
 
 **Pranav Kamble**
 
-Software Developer / Full-Stack Developer
+Aspiring Software Developer | Full-Stack Developer
 
 GitHub:
 
