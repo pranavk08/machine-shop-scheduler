@@ -4,11 +4,18 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -1127,6 +1134,325 @@ public class SchedulerService {
         return completeSchedule;
     }
 
+    private void removeBooking(SchedulingState state, ScheduleResult res) {
+        if (state == null || res == null) {
+            return;
+        }
+        if (res.getMachine() != null && res.getMachine().getId() != null) {
+            state.machineBookings.removeIf(b ->
+                    b.getMachine() != null
+                            && res.getMachine().getId().equals(b.getMachine().getId())
+                            && res.getEndTime().equals(b.getEndTime()));
+        }
+        if (res.getOperator() != null && res.getOperator().getId() != null) {
+            state.operatorBookings.removeIf(b ->
+                    b.getOperator() != null
+                            && res.getOperator().getId().equals(b.getOperator().getId())
+                            && res.getStartTime().equals(b.getStartTime())
+                            && res.getEndTime().equals(b.getEndTime()));
+        }
+    }
+
+    private MachineAvailability findBestRecoverySlot(
+            SchedulingState schedulingState,
+            Operation operation,
+            Machine originalMachine,
+            LocalDateTime minStartTime,
+            int processingMinutes) {
+
+        List<Machine> capableMachines = findCapableMachines(schedulingState, operation.getRequiredMachineType());
+        if (capableMachines == null || capableMachines.isEmpty()) {
+            return null;
+        }
+
+        List<Machine> sortedCandidates = new ArrayList<>(capableMachines);
+        sortedCandidates.sort((m1, m2) -> {
+            if (originalMachine != null && m1.getId() != null && m2.getId() != null) {
+                if (m1.getId().equals(originalMachine.getId())) return -1;
+                if (m2.getId().equals(originalMachine.getId())) return 1;
+            }
+            return m1.getMachineCode().compareTo(m2.getMachineCode());
+        });
+
+        MachineAvailability bestCandidate = null;
+        long bestScore = Long.MAX_VALUE;
+
+        for (Machine machine : sortedCandidates) {
+            if (!machine.isAvailable()) {
+                continue;
+            }
+
+            LocalDateTime candidateStart = minStartTime;
+            String prevPartFamily = getPreviousPartFamily(schedulingState, machine, candidateStart);
+            String targetPartFamily = (operation.getOrder() != null) ? operation.getOrder().getPartFamily() : null;
+            int changeoverMinutes = getChangeoverMinutes(schedulingState, machine, prevPartFamily, targetPartFamily);
+
+            for (int attempt = 0; attempt < MAX_SEARCH_ATTEMPTS; attempt++) {
+                LocalDateTime opStart = candidateStart.plusMinutes(changeoverMinutes);
+                LocalDateTime opEnd = opStart.plusMinutes(processingMinutes);
+
+                if (isMachineFree(schedulingState, machine, candidateStart, opEnd, true)) {
+                    List<Operator> availableOperators = findAvailableOperators(
+                            schedulingState,
+                            operation.getOperationType(),
+                            opStart.toLocalDate(),
+                            opStart,
+                            opEnd);
+
+                    if (!availableOperators.isEmpty()) {
+                        Operator operator = availableOperators.get(0);
+                        long delayMinutes = Duration.between(minStartTime, opEnd).toMinutes();
+                        boolean isDifferentMachine = (originalMachine != null && machine.getId() != null && originalMachine.getId() != null
+                                && !machine.getId().equals(originalMachine.getId()));
+
+                        long score = delayMinutes * 10L + changeoverMinutes + (isDifferentMachine ? 5L : 0L);
+
+                        if (score < bestScore) {
+                            bestScore = score;
+                            bestCandidate = new MachineAvailability(machine, operator, candidateStart, opStart);
+                        }
+                        break;
+                    }
+                }
+
+                LocalDateTime nextTime = getNextMachineFreeTime(schedulingState, machine, candidateStart, true);
+                if (!nextTime.isAfter(candidateStart)) {
+                    candidateStart = candidateStart.plusMinutes(30);
+                } else {
+                    candidateStart = nextTime;
+                }
+
+                prevPartFamily = getPreviousPartFamily(schedulingState, machine, candidateStart);
+                changeoverMinutes = getChangeoverMinutes(schedulingState, machine, prevPartFamily, targetPartFamily);
+            }
+        }
+
+        return bestCandidate;
+    }
+
+    private List<ScheduleResult> repairScheduleWithMinimalDisruption(
+            List<Order> openOrders,
+            List<ScheduleResult> beforeSchedule,
+            LocalDateTime lockBeforeTime) {
+
+        if (beforeSchedule == null || beforeSchedule.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        SchedulingState schedulingState = createSchedulingState();
+
+        // 1. Index baseline results
+        Map<String, ScheduleResult> currentSchedule = new LinkedHashMap<>();
+        for (ScheduleResult res : beforeSchedule) {
+            currentSchedule.put(getOperationKey(res.getOperation()), res);
+        }
+
+        // 2. Identify directly conflicted operations with breakdown
+        Set<String> conflictedKeys = new LinkedHashSet<>();
+        for (ScheduleResult res : beforeSchedule) {
+            if (lockBeforeTime != null && !res.getEndTime().isAfter(lockBeforeTime)) {
+                continue;
+            }
+
+            boolean availableDuringBreakdown = isMachineAvailableDuringBreakdown(
+                    schedulingState,
+                    res.getMachine(),
+                    res.getStartTime(),
+                    res.getEndTime());
+
+            if (!availableDuringBreakdown) {
+                conflictedKeys.add(getOperationKey(res.getOperation()));
+            }
+        }
+
+        if (conflictedKeys.isEmpty()) {
+            return new ArrayList<>(beforeSchedule);
+        }
+
+        // 3. Populate bookings for all non-conflicted operations
+        for (ScheduleResult res : beforeSchedule) {
+            String opKey = getOperationKey(res.getOperation());
+            if (!conflictedKeys.contains(opKey)) {
+                schedulingState.machineBookings.add(new MachineBooking(
+                        res.getMachine(),
+                        res.getOperation().getOrder() != null ? res.getOperation().getOrder().getPartFamily() : "UNKNOWN",
+                        res.getStartTime(),
+                        res.getEndTime()));
+
+                if (res.getOperator() != null) {
+                    schedulingState.operatorBookings.add(new OperatorBooking(
+                            res.getOperator(),
+                            res.getStartTime(),
+                            res.getEndTime()));
+                }
+            }
+        }
+
+        // 4. Map operations by order sequence
+        Map<String, List<ScheduleResult>> orderOpsMap = new LinkedHashMap<>();
+        for (ScheduleResult res : beforeSchedule) {
+            String orderKey = (res.getOperation().getOrder() != null && res.getOperation().getOrder().getId() != null)
+                    ? "ID:" + res.getOperation().getOrder().getId()
+                    : (res.getOperation().getOrder() != null && res.getOperation().getOrder().getOrderNumber() != null
+                            ? "NUM:" + res.getOperation().getOrder().getOrderNumber()
+                            : "KEY:" + getOperationKey(res.getOperation()));
+            orderOpsMap.computeIfAbsent(orderKey, k -> new ArrayList<>()).add(res);
+        }
+        for (List<ScheduleResult> list : orderOpsMap.values()) {
+            list.sort(Comparator.comparingInt(r -> r.getOperation().getSequenceNumber()));
+        }
+
+        // 5. Process repair queue
+        Queue<String> repairQueue = new ArrayDeque<>(conflictedKeys);
+        Set<String> inQueue = new HashSet<>(conflictedKeys);
+
+        while (!repairQueue.isEmpty()) {
+            String opKey = repairQueue.poll();
+            inQueue.remove(opKey);
+
+            ScheduleResult originalRes = currentSchedule.get(opKey);
+            if (originalRes == null) {
+                continue;
+            }
+
+            Operation operation = originalRes.getOperation();
+            Order order = operation.getOrder();
+            String orderKey = (order != null && order.getId() != null)
+                    ? "ID:" + order.getId()
+                    : (order != null && order.getOrderNumber() != null
+                            ? "NUM:" + order.getOrderNumber()
+                            : "KEY:" + opKey);
+
+            // Find predecessor end time
+            LocalDateTime predecessorEndTime = null;
+            List<ScheduleResult> siblings = orderOpsMap.get(orderKey);
+            if (siblings != null) {
+                for (ScheduleResult sib : siblings) {
+                    if (sib.getOperation().getSequenceNumber() < operation.getSequenceNumber()) {
+                        ScheduleResult curSib = currentSchedule.get(getOperationKey(sib.getOperation()));
+                        if (curSib != null) {
+                            if (predecessorEndTime == null || curSib.getEndTime().isAfter(predecessorEndTime)) {
+                                predecessorEndTime = curSib.getEndTime();
+                            }
+                        }
+                    }
+                }
+            }
+
+            LocalDateTime minStartTime = (lockBeforeTime != null) ? lockBeforeTime : LocalDateTime.MIN;
+            if (predecessorEndTime != null && predecessorEndTime.isAfter(minStartTime)) {
+                minStartTime = predecessorEndTime;
+            }
+            if (originalRes.getStartTime().isAfter(minStartTime) && predecessorEndTime == null) {
+                minStartTime = originalRes.getStartTime();
+            }
+
+            MachineAvailability bestAvailability = findBestRecoverySlot(
+                    schedulingState,
+                    operation,
+                    originalRes.getMachine(),
+                    minStartTime,
+                    operation.getProcessingTimeMinutes());
+
+            if (bestAvailability == null) {
+                bestAvailability = findMachineAndOperatorAvailability(
+                        schedulingState,
+                        operation.getRequiredMachineType(),
+                        operation.getOperationType(),
+                        order != null ? order.getPartFamily() : "UNKNOWN",
+                        minStartTime,
+                        operation.getProcessingTimeMinutes(),
+                        true);
+            }
+
+            if (bestAvailability != null && bestAvailability.getOperator() != null) {
+                Machine machine = bestAvailability.getMachine();
+                LocalDateTime machineStartTime = bestAvailability.getStartTime();
+                LocalDateTime startTime = bestAvailability.getOperationStartTime();
+                LocalDateTime endTime = startTime.plusMinutes(operation.getProcessingTimeMinutes());
+                Operator operator = bestAvailability.getOperator();
+
+                schedulingState.machineBookings.add(new MachineBooking(
+                        machine,
+                        order != null ? order.getPartFamily() : "UNKNOWN",
+                        machineStartTime,
+                        endTime));
+
+                schedulingState.operatorBookings.add(new OperatorBooking(
+                        operator,
+                        startTime,
+                        endTime));
+
+                ScheduleResult newRes = new ScheduleResult(
+                        operation,
+                        machine,
+                        operator,
+                        startTime,
+                        endTime);
+
+                currentSchedule.put(opKey, newRes);
+
+                // Cascade A: Precedence to immediate successor in same order
+                if (siblings != null) {
+                    for (ScheduleResult sib : siblings) {
+                        if (sib.getOperation().getSequenceNumber() == operation.getSequenceNumber() + 1) {
+                            String succKey = getOperationKey(sib.getOperation());
+                            ScheduleResult succRes = currentSchedule.get(succKey);
+                            if (succRes != null && succRes.getStartTime().isBefore(endTime)) {
+                                removeBooking(schedulingState, succRes);
+                                if (inQueue.add(succKey)) {
+                                    repairQueue.add(succKey);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Cascade B: Machine overlap push on the assigned machine
+                for (ScheduleResult otherRes : new ArrayList<>(currentSchedule.values())) {
+                    String otherKey = getOperationKey(otherRes.getOperation());
+                    if (!otherKey.equals(opKey) && !inQueue.contains(otherKey)) {
+                        if (otherRes.getMachine() != null && machine != null
+                                && otherRes.getMachine().getId() != null && machine.getId() != null
+                                && otherRes.getMachine().getId().equals(machine.getId())) {
+                            if (startTime.isBefore(otherRes.getEndTime()) && endTime.isAfter(otherRes.getStartTime())) {
+                                removeBooking(schedulingState, otherRes);
+                                if (inQueue.add(otherKey)) {
+                                    repairQueue.add(otherKey);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        List<ScheduleResult> finalSchedule = new ArrayList<>();
+        for (Order order : openOrders) {
+            String orderKey = (order.getId() != null)
+                    ? "ID:" + order.getId()
+                    : "NUM:" + order.getOrderNumber();
+            List<ScheduleResult> siblings = orderOpsMap.get(orderKey);
+            if (siblings != null) {
+                for (ScheduleResult r : siblings) {
+                    ScheduleResult cur = currentSchedule.get(getOperationKey(r.getOperation()));
+                    if (cur != null && !finalSchedule.contains(cur)) {
+                        finalSchedule.add(cur);
+                    }
+                }
+            }
+        }
+        if (finalSchedule.size() < currentSchedule.size()) {
+            for (ScheduleResult cur : currentSchedule.values()) {
+                if (!finalSchedule.contains(cur)) {
+                    finalSchedule.add(cur);
+                }
+            }
+        }
+
+        return finalSchedule;
+    }
+
     public ReplanResultResponse replanSchedule(LocalDateTime replanStartTime) {
         return replanSchedule(null, replanStartTime);
     }
@@ -1168,9 +1494,9 @@ public class SchedulerService {
         List<ScheduleResult> beforeSchedule =
                 generateFullSchedule(openOrders, effectiveBaselineTime, false, null, null);
 
-        // 2. Generate replanned schedule with breakdown constraints, preserving completed/prior work
+        // 2. Generate replanned schedule with minimal-disruption local repair
         List<ScheduleResult> afterSchedule =
-                generateFullSchedule(openOrders, effectiveBaselineTime, true, beforeSchedule, effectiveReplanTime);
+                repairScheduleWithMinimalDisruption(openOrders, beforeSchedule, effectiveReplanTime);
 
         // 3. Compute Before vs After impact deltas and summary
         List<OperationScheduleDelta> impactDeltas = new ArrayList<>();

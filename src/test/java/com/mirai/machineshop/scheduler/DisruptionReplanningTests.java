@@ -626,4 +626,84 @@ class DisruptionReplanningTests {
         assertEquals(1, response.machinesReassignedCount());
         assertEquals("CNC-02", response.afterSchedule().get(0).getMachine().getMachineCode());
     }
+
+    @Test
+    void replanSchedule_minimalDisruption_unrelatedOrdersRemainUntouched() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime baseTime = LocalDateTime.of(today, LocalTime.of(18, 0));
+        LocalDateTime replanStart = LocalDateTime.of(today, LocalTime.of(18, 45));
+
+        // Order 1 on CNC-01 (conflicted)
+        Order order1 = new Order("ORD-001", null, 10, "SHAFT", baseTime.plusDays(3), "OPEN");
+        ReflectionTestUtils.setField(order1, "id", 701L);
+        Operation op1_turning = new Operation(order1, 1, "TURNING", 90, "TURNING");
+        ReflectionTestUtils.setField(op1_turning, "id", 7001L);
+
+        // Order 2 on CNC-02 (unaffected)
+        Order order2 = new Order("ORD-002", null, 10, "SHAFT", baseTime.plusDays(3), "OPEN");
+        ReflectionTestUtils.setField(order2, "id", 702L);
+        Operation op2_turning = new Operation(order2, 1, "TURNING", 90, "TURNING");
+        ReflectionTestUtils.setField(op2_turning, "id", 7002L);
+
+        // Order 3 on GRIND-01 (unaffected)
+        Order order3 = new Order("ORD-003", null, 10, "GEAR", baseTime.plusDays(3), "OPEN");
+        ReflectionTestUtils.setField(order3, "id", 703L);
+        Operation op3_grind = new Operation(order3, 1, "GRINDING", 60, "GRINDING");
+        ReflectionTestUtils.setField(op3_grind, "id", 7003L);
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(order1, order2, order3));
+        when(orderRepository.existsById(701L)).thenReturn(true);
+        when(orderRepository.existsById(702L)).thenReturn(true);
+        when(orderRepository.existsById(703L)).thenReturn(true);
+        when(operationRepository.findAll()).thenReturn(List.of(op1_turning, op2_turning, op3_grind));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
+                .thenReturn(List.of(
+                        new MachineCapability(lathe1, "TURNING"),
+                        new MachineCapability(lathe2, "TURNING")));
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("GRINDING"))
+                .thenReturn(List.of(new MachineCapability(grinder1, "GRINDING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
+                .thenReturn(List.of(new OperatorSkill(operatorRavi, "TURNING"), new OperatorSkill(operatorKumar, "TURNING")));
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("GRINDING"))
+                .thenReturn(List.of(new OperatorSkill(operatorKumar, "GRINDING")));
+
+        OperatorShift shiftRavi = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        OperatorShift shiftKumar = new OperatorShift(operatorKumar, fullDayShift, today, true);
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenReturn(List.of(shiftRavi, shiftKumar));
+
+        // CNC-01 breakdown from 18:45 to 20:00 (overlaps op1_turning)
+        Breakdown breakdownCNC1 = new Breakdown(lathe1, replanStart, replanStart.plusMinutes(75), "Tooling jam");
+        when(breakdownRepository.findAll()).thenReturn(List.of(breakdownCNC1));
+        when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(breakdownCNC1));
+        when(breakdownRepository.findByMachineId(2L)).thenReturn(List.of());
+        when(breakdownRepository.findByMachineId(3L)).thenReturn(List.of());
+
+        ReplanResultResponse response = schedulerService.replanSchedule(baseTime, replanStart);
+
+        assertNotNull(response);
+        assertEquals(3, response.totalOperations());
+        // Only ORD-001 is moved; ORD-002 and ORD-003 remain completely unchanged!
+        assertEquals(1, response.operationsMovedCount(), "Only directly affected ORD-001 should move");
+
+        ScheduleResult beforeOp2 = response.beforeSchedule().stream()
+                .filter(r -> r.getOperation().getId().equals(7002L))
+                .findFirst().orElseThrow();
+        ScheduleResult afterOp2 = response.afterSchedule().stream()
+                .filter(r -> r.getOperation().getId().equals(7002L))
+                .findFirst().orElseThrow();
+
+        ScheduleResult beforeOp3 = response.beforeSchedule().stream()
+                .filter(r -> r.getOperation().getId().equals(7003L))
+                .findFirst().orElseThrow();
+        ScheduleResult afterOp3 = response.afterSchedule().stream()
+                .filter(r -> r.getOperation().getId().equals(7003L))
+                .findFirst().orElseThrow();
+
+        assertEquals(beforeOp2.getStartTime(), afterOp2.getStartTime());
+        assertEquals(beforeOp3.getStartTime(), afterOp3.getStartTime());
+        assertEquals(beforeOp3.getMachine().getMachineCode(), afterOp3.getMachine().getMachineCode());
+    }
 }

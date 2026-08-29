@@ -202,4 +202,39 @@ class SchedulingPerformanceTests {
         assertTrue(elapsed < 1000, "replanSchedule took " + elapsed + "ms, expected < 1000ms");
         System.out.println("⚡ Performance: replanSchedule took " + elapsed + " ms.");
     }
+
+    @Test
+    void replanSchedule_fullShopMinimalDisruptionMetrics() {
+        // Run baseline
+        List<ScheduleResult> baseline = schedulerService.scheduleAllOpenOrders();
+        assertNotNull(baseline);
+
+        // Find an operation on CNC-01
+        ScheduleResult cnc01Op = baseline.stream()
+                .filter(r -> "CNC-01".equalsIgnoreCase(r.getMachine().getMachineCode()))
+                .findFirst().orElseThrow();
+
+        LocalDateTime breakdownStart = cnc01Op.getStartTime().plusMinutes(25);
+        LocalDateTime breakdownEnd = breakdownStart.plusMinutes(75);
+
+        Breakdown breakdown = new Breakdown(cnc01Op.getMachine(), breakdownStart, breakdownEnd, "Spindle error");
+        when(breakdownRepository.findAll()).thenReturn(List.of(breakdown));
+        when(breakdownRepository.findByMachineId(cnc01Op.getMachine().getId())).thenReturn(List.of(breakdown));
+
+        ReplanResultResponse response = schedulerService.replanSchedule(cnc01Op.getStartTime());
+
+        assertNotNull(response);
+        System.out.println("=== Minimal-Disruption Replanning Results ===");
+        System.out.println("Total Operations: " + response.totalOperations());
+        System.out.println("Operations Shifted: " + response.operationsMovedCount());
+        System.out.println("Machines Reassigned: " + response.machinesReassignedCount());
+        System.out.println("Operators Reassigned: " + response.operatorsReassignedCount());
+        System.out.println("Orders Delayed: " + response.ordersDelayedCount());
+        System.out.println("Before Cost: ₹" + (response.beforeCostSummary() != null ? response.beforeCostSummary().totalCost() : 0));
+        System.out.println("After Cost: ₹" + (response.afterCostSummary() != null ? response.afterCostSummary().totalCost() : 0));
+        System.out.println("Net Cost Impact: ₹" + response.netCostImpact());
+
+        // Assert operations shifted is targeted (much smaller than 67)
+        assertTrue(response.operationsMovedCount() <= 10, "Expected targeted minimal disruption, but moved: " + response.operationsMovedCount());
+    }
 }
