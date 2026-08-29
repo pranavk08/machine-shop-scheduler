@@ -10,6 +10,7 @@ function Disruptions() {
   const [replanResult, setReplanResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [formErrors, setFormErrors] = useState({});
+  const [strategy, setStrategy] = useState("MOST_ON_TIME");
 
   // Form state
   const [formData, setFormData] = useState({
@@ -112,10 +113,11 @@ function Disruptions() {
       });
   };
 
-  const handleTriggerReplan = () => {
+  const handleTriggerReplan = (selectedStrategy) => {
+    const activeStrategy = selectedStrategy || strategy;
     setReplanLoading(true);
     setErrorMessage("");
-    api.post("/api/scheduler/replan", {})
+    api.post("/api/scheduler/replan", { strategy: activeStrategy })
       .then((response) => {
         setReplanResult(response.data);
       })
@@ -139,7 +141,7 @@ function Disruptions() {
     const dateStr = start.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
     if (isSameDate) {
-      return `${dateStr}, ${startTimeFormatted} - ${endTimeFormatted}`;
+      return `${dateStr} ${startTimeFormatted} - ${endTimeFormatted}`;
     }
     const endDateStr = end.toLocaleDateString([], { month: 'short', day: 'numeric' });
     return `${dateStr} ${startTimeFormatted} - ${endDateStr} ${endTimeFormatted}`;
@@ -156,17 +158,40 @@ function Disruptions() {
           </p>
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+            {[
+              { id: "MOST_ON_TIME", label: "Most On-Time" },
+              { id: "CHEAPEST_PRODUCTION", label: "Cheapest" },
+              { id: "MOST_ROBUST", label: "Most Robust" },
+            ].map((strat) => (
+              <button
+                key={strat.id}
+                onClick={() => {
+                  setStrategy(strat.id);
+                  handleTriggerReplan(strat.id);
+                }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition ${
+                  strategy === strat.id
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {strat.label}
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={handleOpenModal}
-            className="px-4 py-2.5 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition shadow-sm"
+            className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition shadow-sm"
           >
             + Report Breakdown
           </button>
           <button
-            onClick={handleTriggerReplan}
+            onClick={() => handleTriggerReplan()}
             disabled={replanLoading}
-            className="px-4 py-2.5 bg-slate-900 text-white font-medium rounded-lg hover:bg-slate-800 transition disabled:opacity-50 shadow-sm"
+            className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 transition disabled:opacity-50 shadow-sm"
           >
             {replanLoading ? "Replanning..." : "⚡ Replan Schedule"}
           </button>

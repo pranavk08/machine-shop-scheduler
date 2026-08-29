@@ -706,4 +706,147 @@ class DisruptionReplanningTests {
         assertEquals(beforeOp3.getStartTime(), afterOp3.getStartTime());
         assertEquals(beforeOp3.getMachine().getMachineCode(), afterOp3.getMachine().getMachineCode());
     }
+
+    @Test
+    void replanSchedule_exactScenario_preservesBaselineMachineAndDoesNotShowMill01() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime baseTime = LocalDateTime.of(today, LocalTime.of(18, 0));
+
+        Machine mill1 = new Machine("MILL-01", "Milling 1", "MILLING");
+        ReflectionTestUtils.setField(mill1, "id", 11L);
+        Machine mill2 = new Machine("MILL-02", "Milling 2", "MILLING");
+        ReflectionTestUtils.setField(mill2, "id", 12L);
+        Machine mill3 = new Machine("MILL-03", "Milling 3", "MILLING");
+        ReflectionTestUtils.setField(mill3, "id", 13L);
+
+        // Order 1 occupies MILL-01 from 18:00 to 20:30
+        Order order1 = new Order("ORD-001", null, 10, "SHAFT", baseTime.plusDays(3), "OPEN");
+        ReflectionTestUtils.setField(order1, "id", 801L);
+        Operation op1_milling = new Operation(order1, 1, "MILLING", 150, "MILLING");
+        ReflectionTestUtils.setField(op1_milling, "id", 8001L);
+
+        // Order 3 is placed on MILL-02 at 19:55 -> 21:15
+        Order order3 = new Order("ORD-003", null, 10, "SHAFT", baseTime.plusDays(3), "OPEN");
+        ReflectionTestUtils.setField(order3, "id", 803L);
+        Operation op3_milling = new Operation(order3, 1, "MILLING", 80, "MILLING");
+        ReflectionTestUtils.setField(op3_milling, "id", 8003L);
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(order1, order3));
+        when(orderRepository.existsById(801L)).thenReturn(true);
+        when(orderRepository.existsById(803L)).thenReturn(true);
+        when(operationRepository.findAll()).thenReturn(List.of(op1_milling, op3_milling));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("MILLING"))
+                .thenReturn(List.of(
+                        new MachineCapability(mill1, "MILLING"),
+                        new MachineCapability(mill2, "MILLING"),
+                        new MachineCapability(mill3, "MILLING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("MILLING"))
+                .thenReturn(List.of(
+                        new OperatorSkill(operatorRavi, "MILLING"),
+                        new OperatorSkill(operatorKumar, "MILLING")));
+
+        OperatorShift shiftRavi = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        OperatorShift shiftKumar = new OperatorShift(operatorKumar, fullDayShift, today, true);
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenReturn(List.of(shiftRavi, shiftKumar));
+
+        // Breakdown occurs on MILL-02 from 19:00 to 03:00 tomorrow
+        LocalDateTime breakdownStart = LocalDateTime.of(today, LocalTime.of(19, 0));
+        LocalDateTime breakdownEnd = LocalDateTime.of(today.plusDays(1), LocalTime.of(3, 0));
+        Breakdown breakdownMill2 = new Breakdown(mill2, breakdownStart, breakdownEnd, "Spindle overheat");
+
+        when(breakdownRepository.findAll()).thenReturn(List.of(breakdownMill2));
+        when(breakdownRepository.findByMachineId(11L)).thenReturn(List.of());
+        when(breakdownRepository.findByMachineId(12L)).thenReturn(List.of(breakdownMill2));
+        when(breakdownRepository.findByMachineId(13L)).thenReturn(List.of());
+
+        // Call replan
+        ReplanResultResponse response = schedulerService.replanSchedule(SchedulingStrategy.MOST_ON_TIME, baseTime, breakdownStart);
+
+        assertNotNull(response);
+
+        // 1. Verify that ORD-003 in BEFORE schedule was assigned to MILL-02, NOT MILL-01!
+        ScheduleResult beforeOp3 = response.beforeSchedule().stream()
+                .filter(r -> r.getOperation().getId().equals(8003L))
+                .findFirst().orElseThrow();
+        assertEquals("MILL-02", beforeOp3.getMachine().getMachineCode(),
+                "Before schedule must reflect the original baseline machine MILL-02, NOT MILL-01");
+
+        // 2. Verify that ORD-003 in AFTER schedule was repaired to MILL-03
+        ScheduleResult afterOp3 = response.afterSchedule().stream()
+                .filter(r -> r.getOperation().getId().equals(8003L))
+                .findFirst().orElseThrow();
+        assertEquals("MILL-03", afterOp3.getMachine().getMachineCode(),
+                "After schedule must reroute the broken MILL-02 job to alternative machine MILL-03");
+
+        // 3. Verify Delta
+        OperationScheduleDelta delta = response.impactDeltas().stream()
+                .filter(d -> "ORD-003".equals(d.orderNumber()))
+                .findFirst().orElseThrow();
+        assertEquals("MILL-02", delta.beforeMachineCode());
+        assertEquals("MILL-03", delta.afterMachineCode());
+        assertTrue(delta.machineChanged());
+    }
+
+    @Test
+    void replanSchedule_allThreeStrategies_beforeScheduleMatchesSchedulerExact() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime baseTime = LocalDateTime.of(today, LocalTime.of(8, 0));
+
+        Order order1 = new Order("ORD-001", null, 10, "SHAFT", baseTime.plusDays(1), "OPEN");
+        ReflectionTestUtils.setField(order1, "id", 901L);
+        Operation op1 = new Operation(order1, 1, "TURNING", 60, "TURNING");
+        ReflectionTestUtils.setField(op1, "id", 9001L);
+
+        Order order2 = new Order("ORD-002", null, 20, "GEAR", baseTime.plusDays(3), "OPEN");
+        ReflectionTestUtils.setField(order2, "id", 902L);
+        Operation op2 = new Operation(order2, 1, "TURNING", 90, "TURNING");
+        ReflectionTestUtils.setField(op2, "id", 9002L);
+
+        when(orderRepository.findByStatusIgnoreCase("OPEN")).thenReturn(List.of(order1, order2));
+        when(orderRepository.existsById(901L)).thenReturn(true);
+        when(orderRepository.existsById(902L)).thenReturn(true);
+        when(operationRepository.findAll()).thenReturn(List.of(op1, op2));
+
+        when(machineCapabilityRepository.findByCapabilityIgnoreCase("TURNING"))
+                .thenReturn(List.of(
+                        new MachineCapability(lathe1, "TURNING"),
+                        new MachineCapability(lathe2, "TURNING")));
+
+        when(operatorSkillRepository.findBySkillNameIgnoreCase("TURNING"))
+                .thenReturn(List.of(new OperatorSkill(operatorRavi, "TURNING")));
+
+        OperatorShift shiftRavi = new OperatorShift(operatorRavi, fullDayShift, today, true);
+        when(operatorShiftRepository.findByOperatorIdAndWorkDateAndAvailableTrue(any(), any()))
+                .thenReturn(List.of(shiftRavi));
+
+        Breakdown breakdown = new Breakdown(lathe1, baseTime.plusHours(1), baseTime.plusHours(3), "Maintenance");
+        when(breakdownRepository.findAll()).thenReturn(List.of(breakdown));
+        when(breakdownRepository.findByMachineId(1L)).thenReturn(List.of(breakdown));
+        when(breakdownRepository.findByMachineId(2L)).thenReturn(List.of());
+
+        for (SchedulingStrategy strat : SchedulingStrategy.values()) {
+            List<ScheduleResult> schedulerSchedule = schedulerService.scheduleAllOpenOrders(strat, baseTime);
+            ReplanResultResponse replanResponse = schedulerService.replanSchedule(strat, baseTime, baseTime.plusHours(1));
+
+            assertEquals(schedulerSchedule.size(), replanResponse.beforeSchedule().size(),
+                    "Strategy " + strat + ": Before schedule size must match scheduler schedule size");
+
+            for (int i = 0; i < schedulerSchedule.size(); i++) {
+                ScheduleResult expected = schedulerSchedule.get(i);
+                ScheduleResult actual = replanResponse.beforeSchedule().get(i);
+
+                assertEquals(expected.getOperation().getId(), actual.getOperation().getId(),
+                        "Strategy " + strat + ": Operation sequence must match");
+                assertEquals(expected.getMachine().getMachineCode(), actual.getMachine().getMachineCode(),
+                        "Strategy " + strat + ": Machine assignment in Before schedule must match scheduler exactly");
+                assertEquals(expected.getStartTime(), actual.getStartTime(),
+                        "Strategy " + strat + ": Start time in Before schedule must match scheduler exactly");
+                assertEquals(expected.getEndTime(), actual.getEndTime(),
+                        "Strategy " + strat + ": End time in Before schedule must match scheduler exactly");
+            }
+        }
+    }
 }

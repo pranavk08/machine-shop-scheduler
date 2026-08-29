@@ -171,7 +171,7 @@ class BreakdownAndReplanControllerTests {
                 List.of()
         );
 
-        when(schedulerService.replanSchedule(any(), any())).thenReturn(mockResponse);
+        when(schedulerService.replanSchedule(any(), any(), any())).thenReturn(mockResponse);
 
         schedulerMockMvc.perform(post("/api/scheduler/replan")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -181,5 +181,21 @@ class BreakdownAndReplanControllerTests {
                 .andExpect(jsonPath("$.operationsMovedCount").value(2))
                 .andExpect(jsonPath("$.ordersDelayedCount").value(1))
                 .andExpect(jsonPath("$.machinesReassignedCount").value(1));
+    }
+
+    @Test
+    void replanEndpoint_withStrategy_passesStrategyToService() throws Exception {
+        ReplanResultResponse mockResponse = new ReplanResultResponse(
+                LocalDateTime.now(), 5, 1, 0, 0, 0, List.of(), List.of(), List.of()
+        );
+
+        when(schedulerService.replanSchedule(Mockito.eq(com.mirai.machineshop.scheduler.SchedulingStrategy.CHEAPEST_PRODUCTION), any(), any()))
+                .thenReturn(mockResponse);
+
+        schedulerMockMvc.perform(post("/api/scheduler/replan")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"strategy\":\"CHEAPEST_PRODUCTION\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalOperations").value(5));
     }
 }

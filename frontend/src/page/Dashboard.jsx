@@ -10,8 +10,8 @@ function Dashboard() {
 
   useEffect(() => {
 
-  // Fetch TURNING machines
-  api.get("/api/scheduler/machines/TURNING")
+  // Fetch all machines
+  api.get("/api/machines")
     .then((response) => {
       console.log("Machines from backend:", response.data);
       setMachines(response.data);
@@ -84,8 +84,8 @@ function Dashboard() {
             {machines.length}
           </h2>
 
-          <p className="text-sm text-green-600 mt-2">
-            TURNING machines
+          <p className="text-sm text-slate-400 mt-2">
+            Total machines
           </p>
         </div>
 

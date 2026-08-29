@@ -805,11 +805,35 @@ public class SchedulerService {
         return schedule;
     }
 
+    public LocalDateTime getDefaultScheduleAnchorTime() {
+        List<Breakdown> allBreakdowns = breakdownRepository.findAll();
+        LocalDateTime earliestBreakdownStart = (allBreakdowns != null)
+                ? allBreakdowns.stream()
+                        .map(Breakdown::getStartTime)
+                        .filter(t -> t != null)
+                        .min(LocalDateTime::compareTo)
+                        .orElse(null)
+                : null;
+
+        LocalDate today = LocalDate.now();
+        LocalDateTime defaultShiftStart = today.atTime(6, 0);
+
+        if (earliestBreakdownStart != null && earliestBreakdownStart.isBefore(defaultShiftStart)) {
+            return earliestBreakdownStart;
+        }
+
+        return defaultShiftStart;
+    }
+
     public List<ScheduleResult> scheduleAllOpenOrders() {
         return scheduleAllOpenOrders(SchedulingStrategy.MOST_ON_TIME);
     }
 
     public List<ScheduleResult> scheduleAllOpenOrders(SchedulingStrategy strategy) {
+        return scheduleAllOpenOrders(strategy, getDefaultScheduleAnchorTime());
+    }
+
+    public List<ScheduleResult> scheduleAllOpenOrders(SchedulingStrategy strategy, LocalDateTime startTime) {
 
         List<Order> openOrders =
                 new ArrayList<>(orderRepository.findByStatusIgnoreCase("OPEN"));
@@ -823,10 +847,12 @@ public class SchedulerService {
         SchedulingStrategy effectiveStrategy = (strategy != null) ? strategy : SchedulingStrategy.MOST_ON_TIME;
         sortOrdersByStrategy(openOrders, effectiveStrategy, allOperations);
 
+        LocalDateTime effectiveStartTime = (startTime != null) ? startTime : getDefaultScheduleAnchorTime();
+
         return generateFullSchedule(
                 openOrders,
-                LocalDateTime.now(),
-                true,
+                effectiveStartTime,
+                false,
                 null,
                 null);
     }
@@ -1454,31 +1480,33 @@ public class SchedulerService {
     }
 
     public ReplanResultResponse replanSchedule(LocalDateTime replanStartTime) {
-        return replanSchedule(null, replanStartTime);
+        return replanSchedule(null, null, replanStartTime);
     }
 
     public ReplanResultResponse replanSchedule(
             LocalDateTime baselineStartTime,
             LocalDateTime replanStartTime) {
+        return replanSchedule(null, baselineStartTime, replanStartTime);
+    }
 
-        LocalDateTime now = LocalDateTime.now();
+    public ReplanResultResponse replanSchedule(
+            SchedulingStrategy strategy,
+            LocalDateTime baselineStartTime,
+            LocalDateTime replanStartTime) {
 
-        List<Breakdown> allBreakdowns = breakdownRepository.findAll();
-        LocalDateTime earliestBreakdownStart = (allBreakdowns != null)
-                ? allBreakdowns.stream()
-                        .map(Breakdown::getStartTime)
-                        .filter(t -> t != null)
-                        .min(LocalDateTime::compareTo)
-                        .orElse(null)
-                : null;
-
-        LocalDateTime effectiveReplanTime = (replanStartTime != null)
-                ? replanStartTime
-                : (earliestBreakdownStart != null && earliestBreakdownStart.isBefore(now) ? earliestBreakdownStart : now);
+        LocalDateTime anchorTime = getDefaultScheduleAnchorTime();
 
         LocalDateTime effectiveBaselineTime = (baselineStartTime != null)
                 ? baselineStartTime
-                : effectiveReplanTime;
+                : (replanStartTime != null ? replanStartTime : anchorTime);
+
+        LocalDateTime effectiveReplanTime = (replanStartTime != null)
+                ? replanStartTime
+                : effectiveBaselineTime;
+
+        SchedulingStrategy effectiveStrategy = (strategy != null)
+                ? strategy
+                : SchedulingStrategy.MOST_ON_TIME;
 
         List<Order> openOrders =
                 new ArrayList<>(orderRepository.findByStatusIgnoreCase("OPEN"));
@@ -1488,11 +1516,9 @@ public class SchedulerService {
                     "No open orders found.");
         }
 
-        sortOrdersByStrategy(openOrders, SchedulingStrategy.MOST_ON_TIME, operationRepository.findAll());
-
-        // 1. Generate baseline schedule without breakdown restrictions
+        // 1. Generate baseline schedule using the exact same method, strategy, and anchor as the scheduler
         List<ScheduleResult> beforeSchedule =
-                generateFullSchedule(openOrders, effectiveBaselineTime, false, null, null);
+                scheduleAllOpenOrders(effectiveStrategy, effectiveBaselineTime);
 
         // 2. Generate replanned schedule with minimal-disruption local repair
         List<ScheduleResult> afterSchedule =

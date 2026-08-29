@@ -100,9 +100,13 @@ public class SchedulerController {
 
         LocalDateTime replanStartTime = (request != null && request.replanStartTime() != null)
                 ? request.replanStartTime()
-                : LocalDateTime.now();
+                : null;
 
-        return schedulerService.replanSchedule(baselineStartTime, replanStartTime);
+        com.mirai.machineshop.scheduler.SchedulingStrategy strategy = (request != null)
+                ? request.strategy()
+                : null;
+
+        return schedulerService.replanSchedule(strategy, baselineStartTime, replanStartTime);
     }
     
     @GetMapping("/operators/skill/{skill}")
