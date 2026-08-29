@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.mirai.machineshop.dto.OperationScheduleDelta;
@@ -32,6 +33,7 @@ import com.mirai.machineshop.repository.OperationRepository;
 import com.mirai.machineshop.repository.OperatorShiftRepository;
 import com.mirai.machineshop.repository.OperatorSkillRepository;
 import com.mirai.machineshop.repository.OrderRepository;
+import com.mirai.machineshop.service.CostCalculationService;
 
 @Service
 public class SchedulerService {
@@ -48,8 +50,9 @@ public class SchedulerService {
     private final OperatorShiftRepository operatorShiftRepository;
     private final ChangeoverRepository changeoverRepository;
     private final BreakdownRepository breakdownRepository;
-    private final com.mirai.machineshop.service.CostCalculationService costCalculationService;
+    private final CostCalculationService costCalculationService;
 
+    @Autowired
     public SchedulerService(
             MachineCapabilityRepository machineCapabilityRepository,
             OperationRepository operationRepository,
@@ -58,7 +61,7 @@ public class SchedulerService {
             OperatorShiftRepository operatorShiftRepository,
             ChangeoverRepository changeoverRepository,
             BreakdownRepository breakdownRepository,
-            com.mirai.machineshop.service.CostCalculationService costCalculationService) {
+            CostCalculationService costCalculationService) {
 
         this.machineCapabilityRepository = machineCapabilityRepository;
         this.operationRepository = operationRepository;
@@ -134,6 +137,7 @@ public class SchedulerService {
 
         boolean noBreakdownConflict = !checkBreakdowns
                 || isMachineAvailableDuringBreakdown(
+                        schedulingState,
                         machine,
                         startTime,
                         endTime);
@@ -143,13 +147,21 @@ public class SchedulerService {
     }
 
     private boolean isMachineAvailableDuringBreakdown(
+            SchedulingState schedulingState,
             Machine machine,
             LocalDateTime startTime,
             LocalDateTime endTime) {
 
-        List<Breakdown> breakdowns =
-                breakdownRepository.findByMachineId(
-                        machine.getId());
+        List<Breakdown> breakdowns;
+        if (schedulingState != null && !schedulingState.breakdownsCache.isEmpty()) {
+            breakdowns = schedulingState.breakdownsCache.getOrDefault(machine.getId(), List.of());
+        } else {
+            breakdowns = breakdownRepository.findByMachineId(machine.getId());
+        }
+
+        if (breakdowns == null || breakdowns.isEmpty()) {
+            return true;
+        }
 
         return breakdowns.stream()
                 .noneMatch(breakdown ->
@@ -184,7 +196,7 @@ public class SchedulerService {
             boolean checkBreakdowns) {
 
         List<Machine> machines =
-                findCapableMachines(requiredMachineType);
+                findCapableMachines(schedulingState, requiredMachineType);
 
         Machine bestMachine = null;
         LocalDateTime earliestStartTime = null;
@@ -244,7 +256,8 @@ public class SchedulerService {
                         getNextMachineFreeTime(
                                 schedulingState,
                                 machine,
-                                candidateStartTime);
+                                candidateStartTime,
+                                checkBreakdowns);
 
                 // Safety check: make sure the search moves forward
                 if (!nextTime.isAfter(candidateStartTime)) {
@@ -283,9 +296,10 @@ public class SchedulerService {
     private LocalDateTime getNextMachineFreeTime(
             SchedulingState schedulingState,
             Machine machine,
-            LocalDateTime currentTime) {
+            LocalDateTime currentTime,
+            boolean checkBreakdowns) {
 
-        return schedulingState.machineBookings.stream()
+        LocalDateTime nextBookingEnd = schedulingState.machineBookings.stream()
                 .filter(booking ->
                         booking.getMachine().getId()
                                 .equals(machine.getId()))
@@ -295,6 +309,35 @@ public class SchedulerService {
                 .map(MachineBooking::getEndTime)
                 .min(LocalDateTime::compareTo)
                 .orElse(currentTime);
+
+        if (!checkBreakdowns) {
+            return nextBookingEnd;
+        }
+
+        List<Breakdown> breakdowns;
+        if (schedulingState != null && !schedulingState.breakdownsCache.isEmpty()) {
+            breakdowns = schedulingState.breakdownsCache.getOrDefault(machine.getId(), List.of());
+        } else {
+            breakdowns = breakdownRepository.findByMachineId(machine.getId());
+        }
+
+        LocalDateTime nextBreakdownEnd = (breakdowns != null)
+                ? breakdowns.stream()
+                        .filter(breakdown ->
+                                breakdown.getEndTime()
+                                        .isAfter(currentTime))
+                        .map(Breakdown::getEndTime)
+                        .min(LocalDateTime::compareTo)
+                        .orElse(currentTime)
+                : currentTime;
+
+        if (nextBookingEnd.isAfter(currentTime) && nextBreakdownEnd.isAfter(currentTime)) {
+            return nextBookingEnd.isBefore(nextBreakdownEnd) ? nextBookingEnd : nextBreakdownEnd;
+        } else if (nextBookingEnd.isAfter(currentTime)) {
+            return nextBookingEnd;
+        } else {
+            return nextBreakdownEnd;
+        }
     }
 
     private String getPreviousPartFamily(
@@ -318,6 +361,20 @@ public class SchedulerService {
 
     public List<Machine> findCapableMachines(
             String requiredMachineType) {
+        return findCapableMachines(null, requiredMachineType);
+    }
+
+    private List<Machine> findCapableMachines(
+            SchedulingState schedulingState,
+            String requiredMachineType) {
+
+        if (requiredMachineType == null) {
+            return List.of();
+        }
+
+        if (schedulingState != null && !schedulingState.capableMachinesCache.isEmpty()) {
+            return schedulingState.capableMachinesCache.getOrDefault(requiredMachineType.toUpperCase(), List.of());
+        }
 
         List<MachineCapability> capabilities =
                 machineCapabilityRepository
@@ -362,7 +419,7 @@ public class SchedulerService {
             LocalDateTime endTime) {
 
         List<Operator> qualifiedOperators =
-                findQualifiedOperators(requiredSkill);
+                findQualifiedOperators(schedulingState, requiredSkill);
 
         List<Operator> availableOperators = new ArrayList<>();
 
@@ -373,25 +430,34 @@ public class SchedulerService {
             }
 
             LocalDate queryDate = (date != null) ? date : startTime.toLocalDate();
-
-            List<OperatorShift> currentDayShifts =
-                    operatorShiftRepository
-                            .findByOperatorIdAndWorkDateAndAvailableTrue(
-                                    operator.getId(),
-                                    queryDate);
-
-            List<OperatorShift> previousDayShifts =
-                    operatorShiftRepository
-                            .findByOperatorIdAndWorkDateAndAvailableTrue(
-                                    operator.getId(),
-                                    queryDate.minusDays(1));
-
             List<OperatorShift> allCandidateShifts = new ArrayList<>();
-            if (currentDayShifts != null) {
-                allCandidateShifts.addAll(currentDayShifts);
-            }
-            if (previousDayShifts != null) {
-                allCandidateShifts.addAll(previousDayShifts);
+
+            if (schedulingState != null && !schedulingState.operatorShiftsCache.isEmpty()) {
+                String keyToday = (operator.getId() != null ? operator.getId() : operator.getOperatorCode()) + "#" + queryDate;
+                String keyPrev = (operator.getId() != null ? operator.getId() : operator.getOperatorCode()) + "#" + queryDate.minusDays(1);
+                List<OperatorShift> todayShifts = schedulingState.operatorShiftsCache.get(keyToday);
+                List<OperatorShift> prevShifts = schedulingState.operatorShiftsCache.get(keyPrev);
+                if (todayShifts != null) allCandidateShifts.addAll(todayShifts);
+                if (prevShifts != null) allCandidateShifts.addAll(prevShifts);
+            } else {
+                List<OperatorShift> currentDayShifts =
+                        operatorShiftRepository
+                                .findByOperatorIdAndWorkDateAndAvailableTrue(
+                                        operator.getId(),
+                                        queryDate);
+
+                List<OperatorShift> previousDayShifts =
+                        operatorShiftRepository
+                                .findByOperatorIdAndWorkDateAndAvailableTrue(
+                                        operator.getId(),
+                                        queryDate.minusDays(1));
+
+                if (currentDayShifts != null) {
+                    allCandidateShifts.addAll(currentDayShifts);
+                }
+                if (previousDayShifts != null) {
+                    allCandidateShifts.addAll(previousDayShifts);
+                }
             }
 
             boolean worksDuringOperation = allCandidateShifts.stream()
@@ -417,6 +483,20 @@ public class SchedulerService {
 
     public List<Operator> findQualifiedOperators(
             String requiredSkill) {
+        return findQualifiedOperators(null, requiredSkill);
+    }
+
+    private List<Operator> findQualifiedOperators(
+            SchedulingState schedulingState,
+            String requiredSkill) {
+
+        if (requiredSkill == null) {
+            return List.of();
+        }
+
+        if (schedulingState != null && !schedulingState.qualifiedOperatorsCache.isEmpty()) {
+            return schedulingState.qualifiedOperatorsCache.getOrDefault(requiredSkill.toUpperCase(), List.of());
+        }
 
         List<OperatorSkill> skills =
                 operatorSkillRepository
@@ -925,7 +1005,7 @@ public class SchedulerService {
             List<ScheduleResult> baselineSchedule,
             LocalDateTime lockBeforeTime) {
 
-        SchedulingState schedulingState = new SchedulingState();
+        SchedulingState schedulingState = createSchedulingState();
         List<ScheduleResult> completeSchedule = new ArrayList<>();
 
         Map<String, ScheduleResult> baselineMap = new HashMap<>();
@@ -937,16 +1017,23 @@ public class SchedulerService {
 
         for (Order order : openOrders) {
 
-            List<Operation> operations = operationRepository
-                    .findAll()
-                    .stream()
-                    .filter(operation ->
-                            isSameOrder(operation.getOrder(), order))
-                    .sorted((a, b) ->
-                            Integer.compare(
-                                    a.getSequenceNumber(),
-                                    b.getSequenceNumber()))
-                    .toList();
+            String orderKey = (order.getId() != null)
+                    ? "ID:" + order.getId()
+                    : "NUM:" + order.getOrderNumber();
+
+            List<Operation> operations = schedulingState.orderOperationsCache.get(orderKey);
+            if (operations == null || operations.isEmpty()) {
+                operations = operationRepository
+                        .findAll()
+                        .stream()
+                        .filter(operation ->
+                                isSameOrder(operation.getOrder(), order))
+                        .sorted((a, b) ->
+                                Integer.compare(
+                                        a.getSequenceNumber(),
+                                        b.getSequenceNumber()))
+                        .toList();
+            }
 
             LocalDateTime nextAvailableTime = schedulingStartTime;
 
@@ -1048,9 +1135,20 @@ public class SchedulerService {
             LocalDateTime baselineStartTime,
             LocalDateTime replanStartTime) {
 
+        LocalDateTime now = LocalDateTime.now();
+
+        List<Breakdown> allBreakdowns = breakdownRepository.findAll();
+        LocalDateTime earliestBreakdownStart = (allBreakdowns != null)
+                ? allBreakdowns.stream()
+                        .map(Breakdown::getStartTime)
+                        .filter(t -> t != null)
+                        .min(LocalDateTime::compareTo)
+                        .orElse(null)
+                : null;
+
         LocalDateTime effectiveReplanTime = (replanStartTime != null)
                 ? replanStartTime
-                : LocalDateTime.now();
+                : (earliestBreakdownStart != null && earliestBreakdownStart.isBefore(now) ? earliestBreakdownStart : now);
 
         LocalDateTime effectiveBaselineTime = (baselineStartTime != null)
                 ? baselineStartTime
@@ -1180,6 +1278,103 @@ public class SchedulerService {
                 netCostImpact);
     }
 
+    private SchedulingState createSchedulingState() {
+        SchedulingState state = new SchedulingState();
+
+        try {
+            List<MachineCapability> capabilities = machineCapabilityRepository.findAll();
+            if (capabilities != null) {
+                for (MachineCapability mc : capabilities) {
+                    if (mc.getCapability() != null && mc.getMachine() != null) {
+                        state.capableMachinesCache
+                                .computeIfAbsent(mc.getCapability().toUpperCase(), k -> new ArrayList<>())
+                                .add(mc.getMachine());
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            List<OperatorSkill> skills = operatorSkillRepository.findAll();
+            if (skills != null) {
+                for (OperatorSkill os : skills) {
+                    if (os.getSkillName() != null && os.getOperator() != null) {
+                        state.qualifiedOperatorsCache
+                                .computeIfAbsent(os.getSkillName().toUpperCase(), k -> new ArrayList<>())
+                                .add(os.getOperator());
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            List<OperatorShift> shifts = operatorShiftRepository.findAll();
+            if (shifts != null) {
+                for (OperatorShift os : shifts) {
+                    if (os.isAvailable() && os.getOperator() != null && os.getWorkDate() != null) {
+                        String key = (os.getOperator().getId() != null ? os.getOperator().getId() : os.getOperator().getOperatorCode())
+                                + "#" + os.getWorkDate();
+                        state.operatorShiftsCache
+                                .computeIfAbsent(key, k -> new ArrayList<>())
+                                .add(os);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            List<Breakdown> breakdowns = breakdownRepository.findAll();
+            if (breakdowns != null) {
+                for (Breakdown b : breakdowns) {
+                    if (b.getMachine() != null && b.getMachine().getId() != null) {
+                        state.breakdownsCache
+                                .computeIfAbsent(b.getMachine().getId(), k -> new ArrayList<>())
+                                .add(b);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            List<Changeover> changeovers = changeoverRepository.findAll();
+            if (changeovers != null) {
+                for (Changeover c : changeovers) {
+                    if (c.getMachine() != null && c.getFromPartFamily() != null && c.getToPartFamily() != null) {
+                        String key = c.getMachine().getId() + "|" + c.getFromPartFamily().toUpperCase() + "|" + c.getToPartFamily().toUpperCase();
+                        state.changeoverCache.put(key, c.getChangeoverMinutes());
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            List<Operation> allOps = operationRepository.findAll();
+            if (allOps != null) {
+                for (Operation op : allOps) {
+                    if (op.getOrder() != null) {
+                        String orderKey = (op.getOrder().getId() != null)
+                                ? "ID:" + op.getOrder().getId()
+                                : "NUM:" + op.getOrder().getOrderNumber();
+                        state.orderOperationsCache
+                                .computeIfAbsent(orderKey, k -> new ArrayList<>())
+                                .add(op);
+                    }
+                }
+                for (List<Operation> list : state.orderOperationsCache.values()) {
+                    list.sort(Comparator.comparingInt(Operation::getSequenceNumber));
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return state;
+    }
+
     private static class SchedulingState {
 
         private final List<MachineBooking> machineBookings =
@@ -1189,6 +1384,21 @@ public class SchedulerService {
                 new ArrayList<>();
 
         private final Map<String, Integer> changeoverCache =
+                new HashMap<>();
+
+        private final Map<String, List<Machine>> capableMachinesCache =
+                new HashMap<>();
+
+        private final Map<String, List<Operator>> qualifiedOperatorsCache =
+                new HashMap<>();
+
+        private final Map<String, List<OperatorShift>> operatorShiftsCache =
+                new HashMap<>();
+
+        private final Map<Long, List<Breakdown>> breakdownsCache =
+                new HashMap<>();
+
+        private final Map<String, List<Operation>> orderOperationsCache =
                 new HashMap<>();
     }
 }

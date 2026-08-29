@@ -42,6 +42,7 @@ function Disruptions() {
   useEffect(() => {
     fetchBreakdowns();
     fetchMachines();
+    handleTriggerReplan();
   }, []);
 
   const handleOpenModal = () => {
@@ -97,6 +98,7 @@ function Disruptions() {
       .then(() => {
         setShowModal(false);
         fetchBreakdowns();
+        handleTriggerReplan();
       })
       .catch((err) => {
         const data = err.response?.data;
@@ -541,7 +543,9 @@ function Disruptions() {
 
           {replanResult.impactDeltas.length === 0 && (
             <div className="p-8 text-center text-slate-500">
-              No schedule adjustments needed. Production schedule is unaffected.
+              {breakdowns.length > 0
+                ? "No scheduled operations overlapped the logged breakdown windows. Production schedule is unaffected."
+                : "No active machine breakdowns logged. Production schedule is operating normally."}
             </div>
           )}
         </div>

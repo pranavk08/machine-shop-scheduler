@@ -215,8 +215,24 @@ public class CostCalculationService {
     }
 
     private double calculateChangeoverCost(List<ScheduleResult> schedule) {
-        if (changeoverRepository == null) {
+        if (changeoverRepository == null || schedule == null || schedule.isEmpty()) {
             return 0.0;
+        }
+
+        // Preload changeover cache
+        Map<String, Integer> changeoverCache = new HashMap<>();
+        try {
+            List<Changeover> allChangeovers = changeoverRepository.findAll();
+            if (allChangeovers != null) {
+                for (Changeover c : allChangeovers) {
+                    if (c.getMachine() != null && c.getFromPartFamily() != null && c.getToPartFamily() != null) {
+                        String key = c.getMachine().getId() + "|" + c.getFromPartFamily().toUpperCase() + "|" + c.getToPartFamily().toUpperCase();
+                        changeoverCache.put(key, c.getChangeoverMinutes());
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Fallback to on-demand query if bulk findAll not supported in specific mocks
         }
 
         // Group operations by machine and sort by start time
@@ -243,13 +259,20 @@ public class CostCalculationService {
 
                 if (previousPartFamily != null && currentPartFamily != null
                         && !previousPartFamily.equalsIgnoreCase(currentPartFamily)) {
-                    Optional<Changeover> changeover = changeoverRepository
-                            .findByMachineIdAndFromPartFamilyIgnoreCaseAndToPartFamilyIgnoreCase(
-                                    machine.getId(),
-                                    previousPartFamily,
-                                    currentPartFamily);
+                    String key = machine.getId() + "|" + previousPartFamily.toUpperCase() + "|" + currentPartFamily.toUpperCase();
+                    Integer changeoverMinutes = changeoverCache.get(key);
+                    if (changeoverMinutes == null) {
+                        changeoverMinutes = changeoverRepository
+                                .findByMachineIdAndFromPartFamilyIgnoreCaseAndToPartFamilyIgnoreCase(
+                                        machine.getId(),
+                                        previousPartFamily,
+                                        currentPartFamily)
+                                .map(Changeover::getChangeoverMinutes)
+                                .orElse(120);
+                        changeoverCache.put(key, changeoverMinutes);
+                    }
 
-                    totalChangeoverMinutes += changeover.map(Changeover::getChangeoverMinutes).orElse(120);
+                    totalChangeoverMinutes += changeoverMinutes;
                 }
                 previousPartFamily = currentPartFamily;
             }
