@@ -238,6 +238,7 @@ Frontend: http://localhost:5173
 Pranav Kamble
 
 GitHub: https://github.com/pranavk08/machine-shop-scheduler
+LinkedIn : https://www.linkedin.com/in/pranav-kamble-a29560255/
 
 ---
 
