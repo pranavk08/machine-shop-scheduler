@@ -3,20 +3,41 @@ import api from "../services/api";
 
 function Disruptions() {
   const [breakdowns, setBreakdowns] = useState([]);
+  const [absences, setAbsences] = useState([]);
+  const [materialDelays, setMaterialDelays] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [operators, setOperators] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [replanLoading, setReplanLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [showAbsenceModal, setShowAbsenceModal] = useState(false);
+  const [showMaterialDelayModal, setShowMaterialDelayModal] = useState(false);
   const [replanResult, setReplanResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [formErrors, setFormErrors] = useState({});
   const [strategy, setStrategy] = useState("MOST_ON_TIME");
 
-  // Form state
+  // Breakdown Form state
   const [formData, setFormData] = useState({
     machineId: "",
     startTime: "",
     endTime: "",
+    reason: "",
+  });
+
+  // Absence Form state
+  const [absenceFormData, setAbsenceFormData] = useState({
+    operatorId: "",
+    startTime: "",
+    endTime: "",
+    reason: "",
+  });
+
+  // Material Delay Form state
+  const [materialDelayFormData, setMaterialDelayFormData] = useState({
+    orderId: "",
+    delayedUntil: "",
     reason: "",
   });
 
@@ -30,6 +51,26 @@ function Disruptions() {
       });
   };
 
+  const fetchAbsences = () => {
+    api.get("/api/operator-absences")
+      .then((response) => {
+        setAbsences(response.data);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch operator absences:", error);
+      });
+  };
+
+  const fetchMaterialDelays = () => {
+    api.get("/api/material-delays")
+      .then((response) => {
+        setMaterialDelays(response.data);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch material delays:", error);
+      });
+  };
+
   const fetchMachines = () => {
     api.get("/api/machines")
       .then((response) => {
@@ -40,9 +81,33 @@ function Disruptions() {
       });
   };
 
+  const fetchOperators = () => {
+    api.get("/api/operators")
+      .then((response) => {
+        setOperators(response.data);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch operators:", error);
+      });
+  };
+
+  const fetchOrders = () => {
+    api.get("/api/orders")
+      .then((response) => {
+        setOrders(response.data);
+      })
+      .catch((error) => {
+        console.error("Failed to fetch orders:", error);
+      });
+  };
+
   useEffect(() => {
     fetchBreakdowns();
+    fetchAbsences();
+    fetchMaterialDelays();
     fetchMachines();
+    fetchOperators();
+    fetchOrders();
     handleTriggerReplan();
   }, []);
 
@@ -62,9 +127,50 @@ function Disruptions() {
     setShowModal(true);
   };
 
+  const handleOpenAbsenceModal = () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const formatLocal = (d) => d.toISOString().slice(0, 16);
+
+    setAbsenceFormData({
+      operatorId: operators.length > 0 ? operators[0].id : "",
+      startTime: formatLocal(now),
+      endTime: formatLocal(future),
+      reason: "",
+    });
+    setFormErrors({});
+    setErrorMessage("");
+    setShowAbsenceModal(true);
+  };
+
+  const handleOpenMaterialDelayModal = () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const formatLocal = (d) => d.toISOString().slice(0, 16);
+
+    setMaterialDelayFormData({
+      orderId: orders.length > 0 ? orders[0].id : "",
+      delayedUntil: formatLocal(future),
+      reason: "",
+    });
+    setFormErrors({});
+    setErrorMessage("");
+    setShowMaterialDelayModal(true);
+  };
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleAbsenceInputChange = (e) => {
+    const { name, value } = e.target;
+    setAbsenceFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleMaterialDelayInputChange = (e) => {
+    const { name, value } = e.target;
+    setMaterialDelayFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSubmitBreakdown = (e) => {
@@ -113,6 +219,93 @@ function Disruptions() {
       });
   };
 
+  const handleSubmitAbsence = (e) => {
+    e.preventDefault();
+    setErrorMessage("");
+    setFormErrors({});
+
+    if (!absenceFormData.operatorId) {
+      setErrorMessage("Please select an operator.");
+      return;
+    }
+    if (!absenceFormData.startTime || !absenceFormData.endTime) {
+      setErrorMessage("Start time and end time are required.");
+      return;
+    }
+    if (new Date(absenceFormData.endTime) <= new Date(absenceFormData.startTime)) {
+      setErrorMessage("End time must be after start time.");
+      return;
+    }
+    if (!absenceFormData.reason.trim()) {
+      setErrorMessage("Reason is required.");
+      return;
+    }
+
+    setLoading(true);
+    api.post("/api/operator-absences", {
+      operatorId: Number(absenceFormData.operatorId),
+      startTime: absenceFormData.startTime,
+      endTime: absenceFormData.endTime,
+      reason: absenceFormData.reason.trim(),
+    })
+      .then(() => {
+        setShowAbsenceModal(false);
+        fetchAbsences();
+        handleTriggerReplan();
+      })
+      .catch((err) => {
+        const data = err.response?.data;
+        if (data?.fieldErrors) {
+          setFormErrors(data.fieldErrors);
+        }
+        setErrorMessage(data?.message || "Failed to log operator absence.");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
+  const handleSubmitMaterialDelay = (e) => {
+    e.preventDefault();
+    setErrorMessage("");
+    setFormErrors({});
+
+    if (!materialDelayFormData.orderId) {
+      setErrorMessage("Please select an order.");
+      return;
+    }
+    if (!materialDelayFormData.delayedUntil) {
+      setErrorMessage("Delayed Until date/time is required.");
+      return;
+    }
+    if (!materialDelayFormData.reason.trim()) {
+      setErrorMessage("Reason is required.");
+      return;
+    }
+
+    setLoading(true);
+    api.post("/api/material-delays", {
+      orderId: Number(materialDelayFormData.orderId),
+      delayedUntil: materialDelayFormData.delayedUntil,
+      reason: materialDelayFormData.reason.trim(),
+    })
+      .then(() => {
+        setShowMaterialDelayModal(false);
+        fetchMaterialDelays();
+        handleTriggerReplan();
+      })
+      .catch((err) => {
+        const data = err.response?.data;
+        if (data?.fieldErrors) {
+          setFormErrors(data.fieldErrors);
+        }
+        setErrorMessage(data?.message || "Failed to log material delay.");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
   const handleTriggerReplan = (selectedStrategy) => {
     const activeStrategy = selectedStrategy || strategy;
     setReplanLoading(true);
@@ -145,6 +338,17 @@ function Disruptions() {
     }
     const endDateStr = end.toLocaleDateString([], { month: 'short', day: 'numeric' });
     return `${dateStr} ${startTimeFormatted} - ${endDateStr} ${endTimeFormatted}`;
+  };
+
+  const formatDateTime = (dateStr) => {
+    if (!dateStr) return "-";
+    const date = new Date(dateStr);
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   return (
@@ -189,6 +393,18 @@ function Disruptions() {
             + Report Breakdown
           </button>
           <button
+            onClick={handleOpenAbsenceModal}
+            className="px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition shadow-sm"
+          >
+            + Report Operator Absence
+          </button>
+          <button
+            onClick={handleOpenMaterialDelayModal}
+            className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition shadow-sm"
+          >
+            + Report Material Delay
+          </button>
+          <button
             onClick={() => handleTriggerReplan()}
             disabled={replanLoading}
             className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 transition disabled:opacity-50 shadow-sm"
@@ -205,22 +421,34 @@ function Disruptions() {
       )}
 
       {/* Operational KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4">
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Breakdowns</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Breakdowns</p>
           <h2 className="text-3xl font-bold text-slate-900 mt-2">{breakdowns.length}</h2>
-          <p className="text-xs text-slate-400 mt-1">Logged downtime events</p>
+          <p className="text-xs text-slate-400 mt-1">Machine downtime</p>
+        </div>
+
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Absences</p>
+          <h2 className="text-3xl font-bold text-amber-600 mt-2">{absences.length}</h2>
+          <p className="text-xs text-slate-400 mt-1">Operator downtime</p>
+        </div>
+
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Material Delays</p>
+          <h2 className="text-3xl font-bold text-purple-600 mt-2">{materialDelays.length}</h2>
+          <p className="text-xs text-slate-400 mt-1">Delayed shipments</p>
         </div>
 
         {replanResult && (
           <>
             <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Operations Shifted</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Ops Shifted</p>
               <h2 className="text-3xl font-bold text-amber-600 mt-2">
                 {replanResult.operationsMovedCount}
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Out of {replanResult.totalOperations} operations
+                Out of {replanResult.totalOperations} ops
               </p>
             </div>
 
@@ -336,6 +564,191 @@ function Disruptions() {
               </div>
             </div>
           </div>
+
+          {/* Overtime vs Late Penalty Supervisor Comparison Card */}
+          {replanResult && replanResult.overtimeComparison && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">⚖️</span>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Overtime vs Late Penalty Analysis
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Economic trade-off comparison between regular-shift recovery and overtime recovery
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  {replanResult.overtimeComparison.decisionStatus === "OVERTIME_SELECTED" && (
+                    <span className="px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full border border-green-200">
+                      ✓ Overtime selected
+                    </span>
+                  )}
+                  {replanResult.overtimeComparison.decisionStatus === "OVERTIME_REJECTED" && (
+                    <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full border border-amber-200">
+                      Overtime evaluated but rejected
+                    </span>
+                  )}
+                  {(!replanResult.overtimeComparison.decisionStatus ||
+                    replanResult.overtimeComparison.decisionStatus === "NO_DECISION_REQUIRED") && (
+                    <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-semibold rounded-full border border-slate-200">
+                      No overtime decision required
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 space-y-5">
+                {replanResult.overtimeComparison.decisionStatus === "NO_DECISION_REQUIRED" ||
+                !replanResult.overtimeComparison.orderNumber ? (
+                  <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-lg text-sm text-slate-600 border border-slate-100">
+                    <span className="text-slate-400 text-lg">ℹ️</span>
+                    <div>
+                      <p className="font-semibold text-slate-800">
+                        {replanResult.overtimeComparison.recommendation || "No overtime decision required."}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {replanResult.overtimeComparison.details ||
+                          "All operations were recovered using regular shift capacity with zero or minimal delay."}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Context Header for the affected operation */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-lg border border-slate-100 text-xs">
+                      <div>
+                        <span className="text-slate-500 block">Affected Order & Op:</span>
+                        <span className="font-bold text-slate-900 text-sm">
+                          {replanResult.overtimeComparison.orderNumber} #{replanResult.overtimeComparison.sequenceNumber} {replanResult.overtimeComparison.operationType}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Customer / Tier:</span>
+                        <span className="font-semibold text-slate-800">
+                          {replanResult.overtimeComparison.customerName || "-"} ({replanResult.overtimeComparison.customerTier || "-"})
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Delivery Due Date:</span>
+                        <span className="font-medium text-slate-700">
+                          {formatDateTime(replanResult.overtimeComparison.dueDate)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block">Estimated Savings:</span>
+                        <span className={`font-bold text-sm ${replanResult.overtimeComparison.savings > 0 ? "text-green-700" : "text-slate-700"}`}>
+                          {replanResult.overtimeComparison.savings > 0 ? `₹${replanResult.overtimeComparison.savings.toLocaleString()}` : "₹0"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Comparison Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold text-xs">
+                          <tr>
+                            <th className="px-5 py-3">Recovery Option</th>
+                            <th className="px-5 py-3">Cost Breakdown</th>
+                            <th className="px-5 py-3">Projected Cost</th>
+                            <th className="px-5 py-3 text-right">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {/* Regular Shift Recovery */}
+                          <tr className={replanResult.overtimeComparison.decisionStatus !== "OVERTIME_SELECTED" ? "bg-green-50/40" : "hover:bg-slate-50"}>
+                            <td className="px-5 py-4 font-semibold text-slate-900">
+                              Regular recovery
+                            </td>
+                            <td className="px-5 py-4 text-xs text-slate-600">
+                              Projected Late Penalty: ₹{replanResult.overtimeComparison.regularLatePenalty.toLocaleString()}
+                            </td>
+                            <td className="px-5 py-4 font-bold text-slate-900">
+                              ₹{replanResult.overtimeComparison.regularRecoveryCost.toLocaleString()}
+                            </td>
+                            <td className="px-5 py-4 text-right">
+                              {replanResult.overtimeComparison.decisionStatus === "OVERTIME_SELECTED" ? (
+                                <span className="px-2.5 py-1 text-xs font-medium rounded-md bg-red-50 text-red-700 border border-red-200">
+                                  Higher cost
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-1 text-xs font-bold rounded-md bg-green-100 text-green-800 border border-green-200">
+                                  CHOSEN
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+
+                          {/* Overtime Recovery */}
+                          <tr className={replanResult.overtimeComparison.decisionStatus === "OVERTIME_SELECTED" ? "bg-green-50/40" : "hover:bg-slate-50"}>
+                            <td className="px-5 py-4 font-semibold text-slate-900">
+                              Overtime recovery
+                            </td>
+                            <td className="px-5 py-4 text-xs text-slate-600">
+                              Direct Overtime Labor (₹500/hr): ₹{replanResult.overtimeComparison.overtimeLaborCost.toLocaleString()}
+                              {replanResult.overtimeComparison.overtimeLatePenalty > 0 && ` + Late Penalty: ₹${replanResult.overtimeComparison.overtimeLatePenalty.toLocaleString()}`}
+                            </td>
+                            <td className="px-5 py-4 font-bold text-slate-900">
+                              ₹{replanResult.overtimeComparison.overtimeRecoveryCost.toLocaleString()}
+                            </td>
+                            <td className="px-5 py-4 text-right">
+                              {replanResult.overtimeComparison.decisionStatus === "OVERTIME_SELECTED" ? (
+                                <span className="px-2.5 py-1 text-xs font-bold rounded-md bg-green-100 text-green-800 border border-green-200">
+                                  CHOSEN
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-600 border border-slate-200">
+                                  More expensive
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+
+                          {/* Savings Row (if overtime chosen) */}
+                          {replanResult.overtimeComparison.decisionStatus === "OVERTIME_SELECTED" && (
+                            <tr className="bg-emerald-50/60 font-semibold">
+                              <td className="px-5 py-3 text-emerald-900">
+                                Net Savings
+                              </td>
+                              <td className="px-5 py-3 text-xs text-emerald-700">
+                                Alternative regular cost − Selected overtime cost
+                              </td>
+                              <td className="px-5 py-3 font-bold text-emerald-700">
+                                ₹{replanResult.overtimeComparison.savings.toLocaleString()}
+                              </td>
+                              <td className="px-5 py-3 text-right text-xs text-emerald-800 font-bold">
+                                SAVED
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Recommendation Box */}
+                    <div className={`p-4 rounded-xl border flex items-start gap-3 ${
+                      replanResult.overtimeComparison.decisionStatus === "OVERTIME_SELECTED"
+                        ? "bg-green-50 border-green-200 text-green-900"
+                        : "bg-blue-50 border-blue-200 text-blue-900"
+                    }`}>
+                      <span className="text-lg">💡</span>
+                      <div className="text-sm">
+                        <p className="font-bold">
+                          Recommendation: "{replanResult.overtimeComparison.recommendation}"
+                        </p>
+                        <p className="text-xs mt-1 opacity-90">
+                          {replanResult.overtimeComparison.details}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Late Orders Penalty Breakdown Table */}
           {replanResult.afterCostSummary.lateOrders && replanResult.afterCostSummary.lateOrders.length > 0 && (
@@ -576,46 +989,124 @@ function Disruptions() {
         </div>
       )}
 
-      {/* Breakdowns Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50">
-          <h2 className="text-base font-semibold text-slate-900">Machine Breakdown History</h2>
-        </div>
+      {/* Breakdowns, Absences & Material Delays Tables */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Breakdowns Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <h2 className="text-base font-semibold text-slate-900">Machine Breakdown History</h2>
+            <span className="text-xs text-slate-500 font-medium">{breakdowns.length} events</span>
+          </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
-              <tr>
-                <th className="px-6 py-4">ID</th>
-                <th className="px-6 py-4">Machine</th>
-                <th className="px-6 py-4">Start Time</th>
-                <th className="px-6 py-4">End Time</th>
-                <th className="px-6 py-4">Reason</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {breakdowns.map((breakdown) => (
-                <tr key={breakdown.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 font-semibold text-slate-900">#{breakdown.id}</td>
-                  <td className="px-6 py-4 text-slate-800 font-medium">
-                    {breakdown.machine?.machineCode || "-"}
-                  </td>
-                  <td className="px-6 py-4 text-slate-600">
-                    {breakdown.startTime ? new Date(breakdown.startTime).toLocaleString() : "-"}
-                  </td>
-                  <td className="px-6 py-4 text-slate-600">
-                    {breakdown.endTime ? new Date(breakdown.endTime).toLocaleString() : "-"}
-                  </td>
-                  <td className="px-6 py-4 text-slate-700">{breakdown.reason || "-"}</td>
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold sticky top-0">
+                <tr>
+                  <th className="px-4 py-3">ID</th>
+                  <th className="px-4 py-3">Machine</th>
+                  <th className="px-4 py-3">Time Window</th>
+                  <th className="px-4 py-3">Reason</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {breakdowns.map((breakdown) => (
+                  <tr key={breakdown.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-semibold text-slate-900">#{breakdown.id}</td>
+                    <td className="px-4 py-3 text-slate-800 font-medium">
+                      {breakdown.machine?.machineCode || "-"}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 text-xs">
+                      {formatTimeSlot(breakdown.startTime, breakdown.endTime)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700 text-xs">{breakdown.reason || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {breakdowns.length === 0 && (
+            <div className="p-8 text-center text-slate-500 text-sm">No breakdowns found.</div>
+          )}
         </div>
 
-        {breakdowns.length === 0 && (
-          <div className="p-8 text-center text-slate-500">No breakdowns found.</div>
-        )}
+        {/* Operator Absences Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <h2 className="text-base font-semibold text-slate-900">Operator Absence History</h2>
+            <span className="text-xs text-slate-500 font-medium">{absences.length} events</span>
+          </div>
+
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold sticky top-0">
+                <tr>
+                  <th className="px-4 py-3">ID</th>
+                  <th className="px-4 py-3">Operator</th>
+                  <th className="px-4 py-3">Absence Window</th>
+                  <th className="px-4 py-3">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {absences.map((absence) => (
+                  <tr key={absence.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-semibold text-slate-900">#{absence.id}</td>
+                    <td className="px-4 py-3 text-slate-800 font-medium">
+                      {absence.operator?.name || "-"} ({absence.operator?.operatorCode || "-"})
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 text-xs">
+                      {formatTimeSlot(absence.startTime, absence.endTime)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700 text-xs">{absence.reason || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {absences.length === 0 && (
+            <div className="p-8 text-center text-slate-500 text-sm">No operator absences logged.</div>
+          )}
+        </div>
+
+        {/* Material Delays Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+            <h2 className="text-base font-semibold text-slate-900">Material Delay History</h2>
+            <span className="text-xs text-slate-500 font-medium">{materialDelays.length} events</span>
+          </div>
+
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold sticky top-0">
+                <tr>
+                  <th className="px-4 py-3">ID</th>
+                  <th className="px-4 py-3">Order</th>
+                  <th className="px-4 py-3">Delayed Until</th>
+                  <th className="px-4 py-3">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {materialDelays.map((delay) => (
+                  <tr key={delay.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-semibold text-slate-900">#{delay.id}</td>
+                    <td className="px-4 py-3 text-slate-800 font-medium">
+                      {delay.order?.orderNumber || "-"} ({delay.order?.partFamily || "-"})
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 text-xs font-mono">
+                      {formatDateTime(delay.delayedUntil)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700 text-xs">{delay.reason || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {materialDelays.length === 0 && (
+            <div className="p-8 text-center text-slate-500 text-sm">No material delays logged.</div>
+          )}
+        </div>
       </div>
 
       {/* Report Breakdown Modal */}
@@ -637,7 +1128,7 @@ function Disruptions() {
                 >
                   {machines.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.machineCode} — {m.name} ({m.type})
+                      {m.machineCode} — {m.name} ({m.machineType})
                     </option>
                   ))}
                 </select>
@@ -682,12 +1173,12 @@ function Disruptions() {
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Downtime Reason *
+                  Reason *
                 </label>
                 <textarea
                   name="reason"
                   rows="3"
-                  placeholder="e.g. Spindle bearing overheating, tool wear repair..."
+                  placeholder="e.g. Spindle overheating, electrical failure, hydraulic leak..."
                   value={formData.reason}
                   onChange={handleInputChange}
                   className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
@@ -711,6 +1202,188 @@ function Disruptions() {
                   className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50"
                 >
                   {loading ? "Submitting..." : "Submit Breakdown"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Report Operator Absence Modal */}
+      {showAbsenceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-6">
+            <h3 className="text-xl font-bold text-slate-900 mb-4">Report Operator Absence</h3>
+
+            <form onSubmit={handleSubmitAbsence} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Select Operator *
+                </label>
+                <select
+                  name="operatorId"
+                  value={absenceFormData.operatorId}
+                  onChange={handleAbsenceInputChange}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                >
+                  {operators.map((op) => (
+                    <option key={op.id} value={op.id}>
+                      {op.name} ({op.operatorCode})
+                    </option>
+                  ))}
+                </select>
+                {formErrors.operatorId && (
+                  <p className="text-xs text-red-600 mt-1">{formErrors.operatorId}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Absence Start Time *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    name="startTime"
+                    value={absenceFormData.startTime}
+                    onChange={handleAbsenceInputChange}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                  />
+                  {formErrors.startTime && (
+                    <p className="text-xs text-red-600 mt-1">{formErrors.startTime}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Absence End Time *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    name="endTime"
+                    value={absenceFormData.endTime}
+                    onChange={handleAbsenceInputChange}
+                    className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                  />
+                  {formErrors.endTime && (
+                    <p className="text-xs text-red-600 mt-1">{formErrors.endTime}</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Absence Reason *
+                </label>
+                <textarea
+                  name="reason"
+                  rows="3"
+                  placeholder="e.g. Medical leave, emergency personal leave, unnotified absence..."
+                  value={absenceFormData.reason}
+                  onChange={handleAbsenceInputChange}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                ></textarea>
+                {formErrors.reason && (
+                  <p className="text-xs text-red-600 mt-1">{formErrors.reason}</p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAbsenceModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-2 text-sm font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition disabled:opacity-50"
+                >
+                  {loading ? "Submitting..." : "Submit Absence"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Report Material Delay Modal */}
+      {showMaterialDelayModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-6">
+            <h3 className="text-xl font-bold text-slate-900 mb-4">Report Material Delay</h3>
+
+            <form onSubmit={handleSubmitMaterialDelay} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Select Order *
+                </label>
+                <select
+                  name="orderId"
+                  value={materialDelayFormData.orderId}
+                  onChange={handleMaterialDelayInputChange}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                >
+                  {orders.map((ord) => (
+                    <option key={ord.id} value={ord.id}>
+                      {ord.orderNumber} — Part: {ord.partFamily} (Qty: {ord.quantity})
+                    </option>
+                  ))}
+                </select>
+                {formErrors.orderId && (
+                  <p className="text-xs text-red-600 mt-1">{formErrors.orderId}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Delayed Until (Material Arrival) *
+                </label>
+                <input
+                  type="datetime-local"
+                  name="delayedUntil"
+                  value={materialDelayFormData.delayedUntil}
+                  onChange={handleMaterialDelayInputChange}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                />
+                {formErrors.delayedUntil && (
+                  <p className="text-xs text-red-600 mt-1">{formErrors.delayedUntil}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Delay Reason *
+                </label>
+                <textarea
+                  name="reason"
+                  rows="3"
+                  placeholder="e.g. Raw material supplier shipment delayed, customs clearance hold..."
+                  value={materialDelayFormData.reason}
+                  onChange={handleMaterialDelayInputChange}
+                  className="w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-400"
+                ></textarea>
+                {formErrors.reason && (
+                  <p className="text-xs text-red-600 mt-1">{formErrors.reason}</p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowMaterialDelayModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+                >
+                  {loading ? "Submitting..." : "Submit Material Delay"}
                 </button>
               </div>
             </form>

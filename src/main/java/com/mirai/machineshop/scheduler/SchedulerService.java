@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
@@ -21,22 +22,28 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.mirai.machineshop.dto.OperationScheduleDelta;
+import com.mirai.machineshop.dto.OvertimeDecisionComparison;
 import com.mirai.machineshop.dto.ReplanResultResponse;
 import com.mirai.machineshop.entity.Breakdown;
 import com.mirai.machineshop.entity.Changeover;
+import com.mirai.machineshop.entity.Customer;
 import com.mirai.machineshop.entity.Machine;
 import com.mirai.machineshop.entity.MachineCapability;
 import com.mirai.machineshop.entity.Operation;
 import com.mirai.machineshop.entity.Operator;
+import com.mirai.machineshop.entity.OperatorAbsence;
 import com.mirai.machineshop.entity.OperatorShift;
 import com.mirai.machineshop.entity.OperatorSkill;
 import com.mirai.machineshop.entity.Order;
 import com.mirai.machineshop.exception.ResourceNotFoundException;
 import com.mirai.machineshop.exception.SchedulingUnavailableException;
+import com.mirai.machineshop.entity.MaterialDelay;
 import com.mirai.machineshop.repository.BreakdownRepository;
 import com.mirai.machineshop.repository.ChangeoverRepository;
 import com.mirai.machineshop.repository.MachineCapabilityRepository;
+import com.mirai.machineshop.repository.MaterialDelayRepository;
 import com.mirai.machineshop.repository.OperationRepository;
+import com.mirai.machineshop.repository.OperatorAbsenceRepository;
 import com.mirai.machineshop.repository.OperatorShiftRepository;
 import com.mirai.machineshop.repository.OperatorSkillRepository;
 import com.mirai.machineshop.repository.OrderRepository;
@@ -57,6 +64,8 @@ public class SchedulerService {
     private final OperatorShiftRepository operatorShiftRepository;
     private final ChangeoverRepository changeoverRepository;
     private final BreakdownRepository breakdownRepository;
+    private final OperatorAbsenceRepository operatorAbsenceRepository;
+    private final MaterialDelayRepository materialDelayRepository;
     private final CostCalculationService costCalculationService;
 
     @Autowired
@@ -68,6 +77,8 @@ public class SchedulerService {
             OperatorShiftRepository operatorShiftRepository,
             ChangeoverRepository changeoverRepository,
             BreakdownRepository breakdownRepository,
+            @Autowired(required = false) OperatorAbsenceRepository operatorAbsenceRepository,
+            @Autowired(required = false) MaterialDelayRepository materialDelayRepository,
             CostCalculationService costCalculationService) {
 
         this.machineCapabilityRepository = machineCapabilityRepository;
@@ -77,7 +88,40 @@ public class SchedulerService {
         this.operatorShiftRepository = operatorShiftRepository;
         this.changeoverRepository = changeoverRepository;
         this.breakdownRepository = breakdownRepository;
+        this.operatorAbsenceRepository = operatorAbsenceRepository;
+        this.materialDelayRepository = materialDelayRepository;
         this.costCalculationService = costCalculationService;
+    }
+
+    public SchedulerService(
+            MachineCapabilityRepository machineCapabilityRepository,
+            OperationRepository operationRepository,
+            OrderRepository orderRepository,
+            OperatorSkillRepository operatorSkillRepository,
+            OperatorShiftRepository operatorShiftRepository,
+            ChangeoverRepository changeoverRepository,
+            BreakdownRepository breakdownRepository,
+            OperatorAbsenceRepository operatorAbsenceRepository,
+            CostCalculationService costCalculationService) {
+
+        this(machineCapabilityRepository, operationRepository, orderRepository,
+                operatorSkillRepository, operatorShiftRepository, changeoverRepository,
+                breakdownRepository, operatorAbsenceRepository, null, costCalculationService);
+    }
+
+    public SchedulerService(
+            MachineCapabilityRepository machineCapabilityRepository,
+            OperationRepository operationRepository,
+            OrderRepository orderRepository,
+            OperatorSkillRepository operatorSkillRepository,
+            OperatorShiftRepository operatorShiftRepository,
+            ChangeoverRepository changeoverRepository,
+            BreakdownRepository breakdownRepository,
+            CostCalculationService costCalculationService) {
+
+        this(machineCapabilityRepository, operationRepository, orderRepository,
+                operatorSkillRepository, operatorShiftRepository, changeoverRepository,
+                breakdownRepository, null, null, costCalculationService);
     }
 
     public SchedulerService(
@@ -91,7 +135,7 @@ public class SchedulerService {
 
         this(machineCapabilityRepository, operationRepository, orderRepository,
                 operatorSkillRepository, operatorShiftRepository, changeoverRepository,
-                breakdownRepository,
+                breakdownRepository, null, null,
                 new com.mirai.machineshop.service.CostCalculationService(
                         changeoverRepository, 480, 500.0, 150.0, 75.0, 300.0));
     }
@@ -176,6 +220,68 @@ public class SchedulerService {
                                 breakdown.getEndTime())
                         && endTime.isAfter(
                                 breakdown.getStartTime()));
+    }
+
+    private boolean isOperatorAvailableDuringAbsence(
+            SchedulingState schedulingState,
+            Operator operator,
+            LocalDateTime startTime,
+            LocalDateTime endTime,
+            boolean checkAbsences) {
+
+        if (!checkAbsences) {
+            return true;
+        }
+
+        if (operator == null || operator.getId() == null) {
+            return true;
+        }
+
+        List<OperatorAbsence> absences;
+        if (schedulingState != null && !schedulingState.operatorAbsencesCache.isEmpty()) {
+            absences = schedulingState.operatorAbsencesCache.getOrDefault(operator.getId(), List.of());
+        } else if (operatorAbsenceRepository != null) {
+            absences = operatorAbsenceRepository.findByOperatorId(operator.getId());
+        } else {
+            absences = List.of();
+        }
+
+        if (absences == null || absences.isEmpty()) {
+            return true;
+        }
+
+        return absences.stream()
+                .noneMatch(absence ->
+                        startTime.isBefore(absence.getEndTime())
+                                && endTime.isAfter(absence.getStartTime()));
+    }
+
+    private LocalDateTime getMaterialAvailableTime(
+            SchedulingState schedulingState,
+            Order order) {
+
+        if (order == null || order.getId() == null) {
+            return null;
+        }
+
+        List<MaterialDelay> delays;
+        if (schedulingState != null && !schedulingState.materialDelaysCache.isEmpty()) {
+            delays = schedulingState.materialDelaysCache.get(order.getId());
+        } else if (materialDelayRepository != null) {
+            delays = materialDelayRepository.findByOrderId(order.getId());
+        } else {
+            delays = null;
+        }
+
+        if (delays == null || delays.isEmpty()) {
+            return null;
+        }
+
+        return delays.stream()
+                .map(MaterialDelay::getDelayedUntil)
+                .filter(java.util.Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .orElse(null);
     }
 
     private boolean isOperatorFree(
@@ -415,7 +521,8 @@ public class SchedulerService {
                 requiredSkill,
                 date,
                 startTime,
-                endTime);
+                endTime,
+                true);
     }
 
     private List<Operator> findAvailableOperators(
@@ -424,6 +531,27 @@ public class SchedulerService {
             LocalDate date,
             LocalDateTime startTime,
             LocalDateTime endTime) {
+        return findAvailableOperators(schedulingState, requiredSkill, date, startTime, endTime, true);
+    }
+
+    private List<Operator> findAvailableOperators(
+            SchedulingState schedulingState,
+            String requiredSkill,
+            LocalDate date,
+            LocalDateTime startTime,
+            LocalDateTime endTime,
+            boolean checkAbsences) {
+        return findAvailableOperators(schedulingState, requiredSkill, date, startTime, endTime, checkAbsences, false);
+    }
+
+    private List<Operator> findAvailableOperators(
+            SchedulingState schedulingState,
+            String requiredSkill,
+            LocalDate date,
+            LocalDateTime startTime,
+            LocalDateTime endTime,
+            boolean checkAbsences,
+            boolean allowOvertime) {
 
         List<Operator> qualifiedOperators =
                 findQualifiedOperators(schedulingState, requiredSkill);
@@ -474,7 +602,14 @@ public class SchedulerService {
                                     startTime,
                                     endTime));
 
+            if (!worksDuringOperation && allowOvertime) {
+                // If overtime is allowed, operator must have an active rostered shift on that calendar day
+                worksDuringOperation = !allCandidateShifts.isEmpty()
+                        && allCandidateShifts.stream().anyMatch(OperatorShift::isAvailable);
+            }
+
             if (worksDuringOperation
+                    && isOperatorAvailableDuringAbsence(schedulingState, operator, startTime, endTime, checkAbsences)
                     && isOperatorFree(
                             schedulingState,
                             operator,
@@ -648,7 +783,8 @@ public class SchedulerService {
                             operatorSkill,
                             operationStartTime.toLocalDate(),
                             operationStartTime,
-                            operationEndTime);
+                            operationEndTime,
+                            checkBreakdowns);
 
             if (!operators.isEmpty()) {
 
@@ -815,11 +951,45 @@ public class SchedulerService {
                         .orElse(null)
                 : null;
 
+        List<OperatorAbsence> allAbsences = (operatorAbsenceRepository != null)
+                ? operatorAbsenceRepository.findAll()
+                : List.of();
+        LocalDateTime earliestAbsenceStart = (allAbsences != null)
+                ? allAbsences.stream()
+                        .map(OperatorAbsence::getStartTime)
+                        .filter(t -> t != null)
+                        .min(LocalDateTime::compareTo)
+                        .orElse(null)
+                : null;
+
+        List<MaterialDelay> allMaterialDelays = (materialDelayRepository != null)
+                ? materialDelayRepository.findAll()
+                : List.of();
+        LocalDateTime earliestMaterialDelay = (allMaterialDelays != null)
+                ? allMaterialDelays.stream()
+                        .map(MaterialDelay::getDelayedUntil)
+                        .filter(t -> t != null)
+                        .min(LocalDateTime::compareTo)
+                        .orElse(null)
+                : null;
+
+        LocalDateTime earliestDisruptionStart = earliestBreakdownStart;
+        if (earliestAbsenceStart != null) {
+            if (earliestDisruptionStart == null || earliestAbsenceStart.isBefore(earliestDisruptionStart)) {
+                earliestDisruptionStart = earliestAbsenceStart;
+            }
+        }
+        if (earliestMaterialDelay != null) {
+            if (earliestDisruptionStart == null || earliestMaterialDelay.isBefore(earliestDisruptionStart)) {
+                earliestDisruptionStart = earliestMaterialDelay;
+            }
+        }
+
         LocalDate today = LocalDate.now();
         LocalDateTime defaultShiftStart = today.atTime(6, 0);
 
-        if (earliestBreakdownStart != null && earliestBreakdownStart.isBefore(defaultShiftStart)) {
-            return earliestBreakdownStart;
+        if (earliestDisruptionStart != null && earliestDisruptionStart.isBefore(defaultShiftStart)) {
+            return earliestDisruptionStart;
         }
 
         return defaultShiftStart;
@@ -1199,9 +1369,10 @@ public class SchedulerService {
             }
             return m1.getMachineCode().compareTo(m2.getMachineCode());
         });
-
         MachineAvailability bestCandidate = null;
-        long bestScore = Long.MAX_VALUE;
+        CandidateEvaluation bestRegularEval = null;
+        CandidateEvaluation bestOvertimeEval = null;
+        CandidateEvaluation bestOverallEval = null;
 
         for (Machine machine : sortedCandidates) {
             if (!machine.isAvailable()) {
@@ -1218,26 +1389,79 @@ public class SchedulerService {
                 LocalDateTime opEnd = opStart.plusMinutes(processingMinutes);
 
                 if (isMachineFree(schedulingState, machine, candidateStart, opEnd, true)) {
-                    List<Operator> availableOperators = findAvailableOperators(
+                    // 1. Try regular shift operator first (allowOvertime = false)
+                    List<Operator> regularOperators = findAvailableOperators(
                             schedulingState,
                             operation.getOperationType(),
                             opStart.toLocalDate(),
                             opStart,
-                            opEnd);
+                            opEnd,
+                            true,
+                            false);
 
-                    if (!availableOperators.isEmpty()) {
-                        Operator operator = availableOperators.get(0);
-                        long delayMinutes = Duration.between(minStartTime, opEnd).toMinutes();
-                        boolean isDifferentMachine = (originalMachine != null && machine.getId() != null && originalMachine.getId() != null
-                                && !machine.getId().equals(originalMachine.getId()));
+                    if (!regularOperators.isEmpty()) {
+                        Operator operator = regularOperators.get(0);
+                        CandidateEvaluation eval = evaluateCandidate(
+                                schedulingState,
+                                operation,
+                                originalMachine,
+                                machine,
+                                operator,
+                                minStartTime,
+                                candidateStart,
+                                opStart,
+                                opEnd,
+                                changeoverMinutes,
+                                false);
 
-                        long score = delayMinutes * 10L + changeoverMinutes + (isDifferentMachine ? 5L : 0L);
-
-                        if (score < bestScore) {
-                            bestScore = score;
+                        if (bestRegularEval == null || eval.score < bestRegularEval.score) {
+                            bestRegularEval = eval;
+                        }
+                        if (bestOverallEval == null || eval.score < bestOverallEval.score) {
+                            bestOverallEval = eval;
                             bestCandidate = new MachineAvailability(machine, operator, candidateStart, opStart);
                         }
+                        // If we found a 0-cost regular slot on the original machine with minimal delay, it is globally optimal
+                        if (eval.score < 0.05 && originalMachine != null && machine.getId() != null && machine.getId().equals(originalMachine.getId())) {
+                            break;
+                        }
+                        // Earliest valid regular shift slot on this machine found
                         break;
+                    } else {
+                        // 2. Try overtime operator on this machine (allowOvertime = true)
+                        List<Operator> overtimeOperators = findAvailableOperators(
+                                schedulingState,
+                                operation.getOperationType(),
+                                opStart.toLocalDate(),
+                                opStart,
+                                opEnd,
+                                true,
+                                true);
+
+                        if (!overtimeOperators.isEmpty()) {
+                            Operator operator = overtimeOperators.get(0);
+                            CandidateEvaluation eval = evaluateCandidate(
+                                    schedulingState,
+                                    operation,
+                                    originalMachine,
+                                    machine,
+                                    operator,
+                                    minStartTime,
+                                    candidateStart,
+                                    opStart,
+                                    opEnd,
+                                    changeoverMinutes,
+                                    true);
+
+                            if (bestOvertimeEval == null || eval.score < bestOvertimeEval.score) {
+                                bestOvertimeEval = eval;
+                            }
+                            if (bestOverallEval == null || eval.score < bestOverallEval.score) {
+                                bestOverallEval = eval;
+                                bestCandidate = new MachineAvailability(machine, operator, candidateStart, opStart);
+                            }
+                            // Continue search so subsequent regular-shift slots can be evaluated
+                        }
                     }
                 }
 
@@ -1253,19 +1477,190 @@ public class SchedulerService {
             }
         }
 
+        // Record comparison if overtime was evaluated as an option
+        if (bestOvertimeEval != null) {
+            String status;
+            String recommendation;
+            String details;
+            double regCost = (bestRegularEval != null) ? Math.round(bestRegularEval.totalCost * 100.0) / 100.0 : 0.0;
+            double regPenalty = (bestRegularEval != null) ? Math.round(bestRegularEval.latePenaltyCost * 100.0) / 100.0 : 0.0;
+            String regTime = (bestRegularEval != null) ? bestRegularEval.opStart.toString() : null;
+
+            double otCost = Math.round(bestOvertimeEval.totalCost * 100.0) / 100.0;
+            double otLabor = Math.round(bestOvertimeEval.overtimeCost * 100.0) / 100.0;
+            double otPenalty = Math.round(bestOvertimeEval.latePenaltyCost * 100.0) / 100.0;
+            String otTime = bestOvertimeEval.opStart.toString();
+
+            double savings = 0.0;
+            if (bestOverallEval != null && bestOverallEval.isOvertime) {
+                status = "OVERTIME_SELECTED";
+                savings = Math.max(0.0, Math.round((regCost - otCost) * 100.0) / 100.0);
+                recommendation = "Overtime chosen because it costs less than the projected additional late-delivery penalty.";
+                details = "Overtime recovery saves ₹" + formatAmount(savings) + " vs regular shift recovery by avoiding a projected ₹" + formatAmount(regPenalty) + " late delivery penalty.";
+            } else {
+                status = "OVERTIME_REJECTED";
+                savings = 0.0;
+                recommendation = "Regular shift chosen because overtime would cost more.";
+                details = "Regular recovery costs ₹" + formatAmount(regCost) + " while overtime recovery would cost ₹" + formatAmount(otCost) + " (including ₹" + formatAmount(otLabor) + " overtime labor cost).";
+            }
+
+            Order ord = operation.getOrder();
+            Customer cust = (ord != null) ? ord.getCustomer() : null;
+
+            OvertimeDecisionComparison comparison = new OvertimeDecisionComparison(
+                    status,
+                    ord != null ? ord.getOrderNumber() : null,
+                    operation.getSequenceNumber(),
+                    operation.getOperationType(),
+                    cust != null ? cust.getName() : null,
+                    cust != null ? cust.getTier() : null,
+                    ord != null ? ord.getDueDate() : null,
+                    regCost,
+                    regPenalty,
+                    regTime,
+                    otCost,
+                    otLabor,
+                    otPenalty,
+                    otTime,
+                    savings,
+                    recommendation,
+                    details);
+
+            schedulingState.overtimeDecisions.add(comparison);
+        }
+
         return bestCandidate;
+    }
+
+    private String formatAmount(double val) {
+        if (Math.abs(val - Math.round(val)) < 0.001) {
+            return String.format(Locale.US, "%,d", (long) Math.round(val));
+        } else {
+            return String.format(Locale.US, "%,.2f", val);
+        }
+    }
+
+    private static class CandidateEvaluation {
+        Machine machine;
+        Operator operator;
+        LocalDateTime candidateStart;
+        LocalDateTime opStart;
+        LocalDateTime opEnd;
+        boolean isOvertime;
+        double overtimeCost;
+        double latePenaltyCost;
+        double changeoverCost;
+        double totalCost;
+        double score;
+
+        CandidateEvaluation(Machine machine, Operator operator, LocalDateTime candidateStart,
+                            LocalDateTime opStart, LocalDateTime opEnd, boolean isOvertime,
+                            double overtimeCost, double latePenaltyCost, double changeoverCost, double score) {
+            this.machine = machine;
+            this.operator = operator;
+            this.candidateStart = candidateStart;
+            this.opStart = opStart;
+            this.opEnd = opEnd;
+            this.isOvertime = isOvertime;
+            this.overtimeCost = overtimeCost;
+            this.latePenaltyCost = latePenaltyCost;
+            this.changeoverCost = changeoverCost;
+            this.totalCost = overtimeCost + latePenaltyCost + changeoverCost;
+            this.score = score;
+        }
+    }
+
+    private CandidateEvaluation evaluateCandidate(
+            SchedulingState schedulingState,
+            Operation operation,
+            Machine originalMachine,
+            Machine candidateMachine,
+            Operator candidateOperator,
+            LocalDateTime minStartTime,
+            LocalDateTime candidateStart,
+            LocalDateTime opStart,
+            LocalDateTime opEnd,
+            int changeoverMinutes,
+            boolean isOvertime) {
+
+        double otRate = (costCalculationService != null) ? costCalculationService.getOvertimeHourlyRate() : 500.0;
+        double tier1Rate = (costCalculationService != null) ? costCalculationService.getTier1PenaltyHourlyRate() : 150.0;
+        double tier2Rate = (costCalculationService != null) ? costCalculationService.getTier2PenaltyHourlyRate() : 75.0;
+        double changeoverRate = (costCalculationService != null) ? costCalculationService.getChangeoverHourlyRate() : 300.0;
+
+        // 1. Overtime Cost
+        double overtimeCost = 0.0;
+        if (isOvertime) {
+            int durationMinutes = (int) Duration.between(opStart, opEnd).toMinutes();
+            overtimeCost = (durationMinutes / 60.0) * otRate;
+        }
+
+        // 2. Incremental Late Penalty Cost
+        double latePenaltyCost = 0.0;
+        if (operation.getOrder() != null && operation.getOrder().getDueDate() != null) {
+            LocalDateTime dueDate = operation.getOrder().getDueDate();
+
+            int remainingDownstreamMinutes = 0;
+            String orderKey = (operation.getOrder().getId() != null)
+                    ? "ID:" + operation.getOrder().getId()
+                    : "NUM:" + operation.getOrder().getOrderNumber();
+            List<Operation> orderOps = schedulingState.orderOperationsCache.get(orderKey);
+            if (orderOps != null) {
+                for (Operation o : orderOps) {
+                    if (o.getSequenceNumber() > operation.getSequenceNumber()) {
+                        remainingDownstreamMinutes += o.getProcessingTimeMinutes();
+                    }
+                }
+            }
+
+            LocalDateTime projectedOrderCompletion = opEnd.plusMinutes(remainingDownstreamMinutes);
+            if (projectedOrderCompletion.isAfter(dueDate)) {
+                double delayHours = Duration.between(dueDate, projectedOrderCompletion).toMinutes() / 60.0;
+                Customer cust = operation.getOrder().getCustomer();
+                String tier = (cust != null && cust.getTier() != null) ? cust.getTier() : "TIER-2";
+                double penaltyRate = (tier.toUpperCase().contains("1") || tier.equalsIgnoreCase("TIER-1"))
+                        ? tier1Rate : tier2Rate;
+                latePenaltyCost = delayHours * penaltyRate;
+            }
+        }
+
+        // 3. Changeover Cost
+        double changeoverCost = (changeoverMinutes / 60.0) * changeoverRate;
+
+        // 4. Minor tie-breakers for stability and schedule preservation
+        long delayMinutes = Math.max(0, Duration.between(minStartTime, opEnd).toMinutes());
+        boolean isDifferentMachine = (originalMachine != null && candidateMachine.getId() != null && originalMachine.getId() != null
+                && !candidateMachine.getId().equals(originalMachine.getId()));
+
+        double tieBreaker = (delayMinutes * 0.001) + (isDifferentMachine ? 0.01 : 0.0) + (isOvertime ? 0.005 : 0.0);
+        double score = overtimeCost + latePenaltyCost + changeoverCost + tieBreaker;
+
+        return new CandidateEvaluation(
+                candidateMachine, candidateOperator, candidateStart,
+                opStart, opEnd, isOvertime,
+                overtimeCost, latePenaltyCost, changeoverCost, score);
     }
 
     private List<ScheduleResult> repairScheduleWithMinimalDisruption(
             List<Order> openOrders,
             List<ScheduleResult> beforeSchedule,
             LocalDateTime lockBeforeTime) {
+        return repairScheduleWithMinimalDisruption(openOrders, beforeSchedule, lockBeforeTime, createSchedulingState());
+    }
+
+    private List<ScheduleResult> repairScheduleWithMinimalDisruption(
+            List<Order> openOrders,
+            List<ScheduleResult> beforeSchedule,
+            LocalDateTime lockBeforeTime,
+            SchedulingState schedulingState) {
 
         if (beforeSchedule == null || beforeSchedule.isEmpty()) {
             return Collections.emptyList();
         }
 
-        SchedulingState schedulingState = createSchedulingState();
+        if (schedulingState == null) {
+            schedulingState = createSchedulingState();
+        }
 
         // 1. Index baseline results
         Map<String, ScheduleResult> currentSchedule = new LinkedHashMap<>();
@@ -1273,7 +1668,7 @@ public class SchedulerService {
             currentSchedule.put(getOperationKey(res.getOperation()), res);
         }
 
-        // 2. Identify directly conflicted operations with breakdown
+        // 2. Identify directly conflicted operations with breakdown or operator absence
         Set<String> conflictedKeys = new LinkedHashSet<>();
         for (ScheduleResult res : beforeSchedule) {
             if (lockBeforeTime != null && !res.getEndTime().isAfter(lockBeforeTime)) {
@@ -1286,7 +1681,17 @@ public class SchedulerService {
                     res.getStartTime(),
                     res.getEndTime());
 
-            if (!availableDuringBreakdown) {
+            boolean availableDuringAbsence = isOperatorAvailableDuringAbsence(
+                    schedulingState,
+                    res.getOperator(),
+                    res.getStartTime(),
+                    res.getEndTime(),
+                    true);
+
+            LocalDateTime materialAvailableTime = getMaterialAvailableTime(schedulingState, res.getOperation().getOrder());
+            boolean violatesMaterialDelay = materialAvailableTime != null && res.getStartTime().isBefore(materialAvailableTime);
+
+            if (!availableDuringBreakdown || !availableDuringAbsence || violatesMaterialDelay) {
                 conflictedKeys.add(getOperationKey(res.getOperation()));
             }
         }
@@ -1369,7 +1774,11 @@ public class SchedulerService {
             if (predecessorEndTime != null && predecessorEndTime.isAfter(minStartTime)) {
                 minStartTime = predecessorEndTime;
             }
-            if (originalRes.getStartTime().isAfter(minStartTime) && predecessorEndTime == null) {
+            LocalDateTime materialAvailableTime = getMaterialAvailableTime(schedulingState, operation.getOrder());
+            if (materialAvailableTime != null && materialAvailableTime.isAfter(minStartTime)) {
+                minStartTime = materialAvailableTime;
+            }
+            if (originalRes.getStartTime().isAfter(minStartTime) && predecessorEndTime == null && materialAvailableTime == null) {
                 minStartTime = originalRes.getStartTime();
             }
 
@@ -1479,6 +1888,10 @@ public class SchedulerService {
         return finalSchedule;
     }
 
+    public ReplanResultResponse replanSchedule() {
+        return replanSchedule(null, null, null);
+    }
+
     public ReplanResultResponse replanSchedule(LocalDateTime replanStartTime) {
         return replanSchedule(null, null, replanStartTime);
     }
@@ -1521,8 +1934,9 @@ public class SchedulerService {
                 scheduleAllOpenOrders(effectiveStrategy, effectiveBaselineTime);
 
         // 2. Generate replanned schedule with minimal-disruption local repair
+        SchedulingState replanState = createSchedulingState();
         List<ScheduleResult> afterSchedule =
-                repairScheduleWithMinimalDisruption(openOrders, beforeSchedule, effectiveReplanTime);
+                repairScheduleWithMinimalDisruption(openOrders, beforeSchedule, effectiveReplanTime, replanState);
 
         // 3. Compute Before vs After impact deltas and summary
         List<OperationScheduleDelta> impactDeltas = new ArrayList<>();
@@ -1615,6 +2029,61 @@ public class SchedulerService {
                 ? Math.round((afterCostSummary.totalCost() - beforeCostSummary.totalCost()) * 100.0) / 100.0
                 : 0.0;
 
+        OvertimeDecisionComparison primaryDecision = null;
+        if (!replanState.overtimeDecisions.isEmpty()) {
+            primaryDecision = replanState.overtimeDecisions.stream()
+                    .filter(d -> "OVERTIME_SELECTED".equalsIgnoreCase(d.decisionStatus()))
+                    .max(Comparator.comparingDouble(OvertimeDecisionComparison::savings))
+                    .orElse(replanState.overtimeDecisions.get(0));
+        }
+
+        if (primaryDecision != null && "OVERTIME_SELECTED".equalsIgnoreCase(primaryDecision.decisionStatus())) {
+            double actualOvertimeLaborCost = (afterCostSummary != null)
+                    ? afterCostSummary.totalOvertimeCost()
+                    : primaryDecision.overtimeLaborCost();
+
+            if (afterCostSummary != null && beforeCostSummary != null) {
+                double deltaOt = Math.max(0.0, afterCostSummary.totalOvertimeCost() - beforeCostSummary.totalOvertimeCost());
+                if (deltaOt > 0) {
+                    actualOvertimeLaborCost = deltaOt;
+                }
+            }
+
+            double otLatePenalty = primaryDecision.overtimeLatePenalty();
+            double regCost = primaryDecision.regularRecoveryCost();
+            double regPenalty = primaryDecision.regularLatePenalty();
+            double nonLaborOtCost = Math.max(0.0, primaryDecision.overtimeRecoveryCost() - primaryDecision.overtimeLaborCost() - otLatePenalty);
+            double newOtRecoveryCost = Math.round((actualOvertimeLaborCost + otLatePenalty + nonLaborOtCost) * 100.0) / 100.0;
+            double newSavings = Math.max(0.0, Math.round((regCost - newOtRecoveryCost) * 100.0) / 100.0);
+
+            String recommendation = "Overtime chosen because it costs less than the projected additional late-delivery penalty.";
+            String details = "Overtime recovery saves ₹" + formatAmount(newSavings) + " vs regular shift recovery by avoiding a projected ₹" + formatAmount(regPenalty) + " late delivery penalty.";
+
+            primaryDecision = new OvertimeDecisionComparison(
+                    primaryDecision.decisionStatus(),
+                    primaryDecision.orderNumber(),
+                    primaryDecision.sequenceNumber(),
+                    primaryDecision.operationType(),
+                    primaryDecision.customerName(),
+                    primaryDecision.customerTier(),
+                    primaryDecision.dueDate(),
+                    regCost,
+                    regPenalty,
+                    primaryDecision.regularRecoveryTime(),
+                    newOtRecoveryCost,
+                    actualOvertimeLaborCost,
+                    otLatePenalty,
+                    primaryDecision.overtimeRecoveryTime(),
+                    newSavings,
+                    recommendation,
+                    details
+            );
+        }
+
+        if (primaryDecision == null) {
+            primaryDecision = OvertimeDecisionComparison.noDecisionRequired();
+        }
+
         return new ReplanResultResponse(
                 effectiveReplanTime,
                 afterSchedule.size(),
@@ -1627,7 +2096,9 @@ public class SchedulerService {
                 impactDeltas,
                 beforeCostSummary,
                 afterCostSummary,
-                netCostImpact);
+                netCostImpact,
+                primaryDecision,
+                replanState.overtimeDecisions);
     }
 
     private SchedulingState createSchedulingState() {
@@ -1685,6 +2156,38 @@ public class SchedulerService {
                         state.breakdownsCache
                                 .computeIfAbsent(b.getMachine().getId(), k -> new ArrayList<>())
                                 .add(b);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            if (operatorAbsenceRepository != null) {
+                List<OperatorAbsence> absences = operatorAbsenceRepository.findAll();
+                if (absences != null) {
+                    for (OperatorAbsence a : absences) {
+                        if (a.getOperator() != null && a.getOperator().getId() != null) {
+                            state.operatorAbsencesCache
+                                    .computeIfAbsent(a.getOperator().getId(), k -> new ArrayList<>())
+                                    .add(a);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            if (materialDelayRepository != null) {
+                List<MaterialDelay> materialDelays = materialDelayRepository.findAll();
+                if (materialDelays != null) {
+                    for (MaterialDelay md : materialDelays) {
+                        if (md.getOrder() != null && md.getOrder().getId() != null) {
+                            state.materialDelaysCache
+                                    .computeIfAbsent(md.getOrder().getId(), k -> new ArrayList<>())
+                                    .add(md);
+                        }
                     }
                 }
             }
@@ -1750,7 +2253,17 @@ public class SchedulerService {
         private final Map<Long, List<Breakdown>> breakdownsCache =
                 new HashMap<>();
 
+        private final Map<Long, List<OperatorAbsence>> operatorAbsencesCache =
+                new HashMap<>();
+
+        private final Map<Long, List<MaterialDelay>> materialDelaysCache =
+                new HashMap<>();
+
         private final Map<String, List<Operation>> orderOperationsCache =
                 new HashMap<>();
+
+        private final List<OvertimeDecisionComparison> overtimeDecisions =
+                new ArrayList<>();
     }
 }
+
